@@ -6,6 +6,7 @@ import threading
 import unittest
 from pathlib import Path
 from urllib.error import HTTPError
+from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from herald.config import Settings
@@ -78,7 +79,7 @@ class WebTests(unittest.TestCase):
 
         with urlopen(self.base_url + "/static/app.js") as response:
             script = response.read().decode()
-        self.assertIn('href="#entry-${entry.id}"', script)
+        self.assertIn('href="/entry/${entry.id}"', script)
         self.assertIn('window.addEventListener("hashchange"', script)
         self.assertIn("Open →", script)
 
@@ -115,6 +116,41 @@ class WebTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(entry["id"], entry_id)
         self.assertIn("source_title", entry)
+
+    def test_article_page_and_forms_work_without_javascript(self) -> None:
+        entry_id = self.database.list_entries()[0]["id"]
+        with urlopen(self.base_url + f"/entry/{entry_id}") as response:
+            page = response.read().decode()
+        self.assertIn("A Low-Latency Interconnect", page)
+        self.assertIn(f'action="/entry/{entry_id}/summarize"', page)
+        self.assertIn(f'action="/entry/{entry_id}/export"', page)
+
+        request = Request(
+            self.base_url + f"/entry/{entry_id}/action",
+            data=urlencode({"action": "keep"}).encode(),
+            method="POST",
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        with urlopen(request) as response:
+            self.assertEqual(response.url, self.base_url + f"/entry/{entry_id}")
+        self.assertEqual(self.database.get_entry(entry_id)["status"], "kept")
+
+        for action in ("summarize", "export"):
+            request = Request(
+                self.base_url + f"/entry/{entry_id}/{action}",
+                data=b"",
+                method="POST",
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+            with urlopen(request) as response:
+                page = response.read().decode()
+            self.assertEqual(response.url, self.base_url + f"/entry/{entry_id}")
+
+        entry = self.database.get_entry(entry_id)
+        self.assertTrue(entry["summary"])
+        self.assertTrue(entry["exported_path"])
+        self.assertIn("Exported to", page)
+        self.assertTrue((self.settings.vault_path / entry["exported_path"]).is_file())
 
     def test_triage_action_uses_contract_verbs(self) -> None:
         entry_id = self.database.list_entries()[0]["id"]

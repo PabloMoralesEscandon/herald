@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import mimetypes
+from html import escape
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -63,6 +64,10 @@ class HeraldRequestHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/stats":
             self._send_json(self.server.database.entry_counts())
             return
+        page_entry_id = self._page_entry_id(parsed.path)
+        if page_entry_id is not None:
+            self._serve_entry_page(page_entry_id)
+            return
         entry_id = self._entry_id(parsed.path)
         if entry_id is not None:
             self._get_entry(entry_id)
@@ -71,6 +76,11 @@ class HeraldRequestHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
         path = urlparse(self.path).path
+        page_action = self._entry_page_subroute(path)
+        if page_action is not None:
+            entry_id, action = page_action
+            self._handle_entry_page_action(entry_id, action)
+            return
         if path == "/api/sources":
             self._add_source()
             return
@@ -106,6 +116,133 @@ class HeraldRequestHandler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
         self.wfile.write(content)
+
+    def _serve_entry_page(
+        self,
+        entry_id: int,
+        *,
+        message: str = "",
+        error: str = "",
+        status: HTTPStatus = HTTPStatus.OK,
+    ) -> None:
+        entry = self.server.database.get_entry(entry_id)
+        if entry is None:
+            self._send_html(
+                "<!doctype html><title>Not found — Herald</title>"
+                '<main class="article-page"><h1>Article not found</h1>'
+                '<p><a href="/">Return to the inbox</a></p></main>',
+                HTTPStatus.NOT_FOUND,
+            )
+            return
+        kept = entry["status"] == "kept"
+        read_action = "unread" if entry["status"] == "read" else "read"
+        read_label = "Mark unread" if read_action == "unread" else "Mark read"
+        summary = entry["summary"] or "No summary has been generated yet."
+        exported = (
+            f'<p class="page-notice success">Exported to {escape(entry["exported_path"])}</p>'
+            if entry["exported_path"]
+            else ""
+        )
+        notice = (
+            f'<p class="page-notice success">{escape(message)}</p>' if message else ""
+        )
+        problem = f'<p class="page-notice error">{escape(error)}</p>' if error else ""
+        disabled = "" if kept else " disabled"
+        disabled_hint = "" if kept else "<small>Keep this article before exporting.</small>"
+        document = f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{escape(entry['title'])} — Herald</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body class="article-page-body">
+  <main class="article-page">
+    <a class="page-back" href="/">← Back to inbox</a>
+    {notice}{problem}{exported}
+    <div class="reader-source"><span>{escape(entry['source_category'])}</span><span>·</span><span>{escape(entry['source_title'])}</span></div>
+    <h1>{escape(entry['title'])}</h1>
+    <p class="page-byline">{escape(entry['author'] or 'Unknown author')} · {escape(entry['published_at'] or 'Date unavailable')}</p>
+    <p class="status-chip {escape(entry['status'])}">{escape(entry['status'])}</p>
+    <div class="page-actions">
+      <form method="post" action="/entry/{entry_id}/action"><button name="action" value="{read_action}">{read_label}</button></form>
+      <form method="post" action="/entry/{entry_id}/action"><button name="action" value="keep">Keep</button></form>
+      <form method="post" action="/entry/{entry_id}/action"><button name="action" value="discard">Discard</button></form>
+      <form method="post" action="/entry/{entry_id}/summarize"><button>Generate summary</button></form>
+      <form method="post" action="/entry/{entry_id}/export"><button{disabled}>Export to Obsidian</button>{disabled_hint}</form>
+    </div>
+    <section class="summary-card">
+      <div class="summary-heading"><div><span class="spark">✦</span><h2>Herald summary</h2></div></div>
+      <p>{escape(summary)}</p>
+    </section>
+    <section class="page-excerpt"><h2>From the feed</h2><p>{escape(entry['content'] or 'The feed did not provide an excerpt.')}</p></section>
+    <a class="open-link" href="{escape(entry['url'], quote=True)}" target="_blank" rel="noopener noreferrer">Read original ↗</a>
+  </main>
+</body>
+</html>"""
+        self._send_html(document, status)
+
+    def _handle_entry_page_action(self, entry_id: int, action: str) -> None:
+        entry = self.server.database.get_entry(entry_id)
+        if entry is None:
+            self._serve_entry_page(entry_id)
+            return
+        if action == "action":
+            form = self._read_form()
+            if form is None:
+                return
+            requested = form.get("action", [""])[0]
+            status = ACTION_STATUSES.get(requested)
+            if status is None:
+                self._serve_entry_page(
+                    entry_id, error="Unknown article action.", status=HTTPStatus.BAD_REQUEST
+                )
+                return
+            self.server.database.set_status(entry_id, status)
+            self._redirect_to_entry(entry_id)
+            return
+        if action == "summarize":
+            try:
+                self.server.service.summarize_entry(entry_id)
+            except KeyError:
+                self._serve_entry_page(entry_id)
+                return
+            self._redirect_to_entry(entry_id)
+            return
+        if action == "export":
+            try:
+                self.server.service.export_entry(entry_id)
+            except ValueError as problem:
+                self._serve_entry_page(
+                    entry_id, error=str(problem), status=HTTPStatus.CONFLICT
+                )
+                return
+            self._redirect_to_entry(entry_id)
+            return
+        self._send_error(HTTPStatus.NOT_FOUND, "Not found")
+
+    def _read_form(self) -> dict[str, list[str]] | None:
+        if "application/x-www-form-urlencoded" not in self.headers.get(
+            "Content-Type", ""
+        ):
+            self._send_error(
+                HTTPStatus.UNSUPPORTED_MEDIA_TYPE,
+                "Content-Type must be application/x-www-form-urlencoded",
+            )
+            return None
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            self._send_error(HTTPStatus.BAD_REQUEST, "Invalid Content-Length")
+            return None
+        return parse_qs(self.rfile.read(min(length, 100_000)).decode("utf-8"))
+
+    def _redirect_to_entry(self, entry_id: int) -> None:
+        self.send_response(HTTPStatus.SEE_OTHER)
+        self.send_header("Location", f"/entry/{entry_id}")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
 
     def _list_entries(self, query: dict[str, list[str]]) -> None:
         status = query.get("status", [None])[0] or None
@@ -270,6 +407,28 @@ class HeraldRequestHandler(BaseHTTPRequestHandler):
         except ValueError:
             return None
 
+    @staticmethod
+    def _page_entry_id(path: str) -> int | None:
+        parts = path.strip("/").split("/")
+        if len(parts) != 2 or parts[0] != "entry":
+            return None
+        try:
+            return int(parts[1])
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _entry_page_subroute(path: str) -> tuple[int, str] | None:
+        parts = path.strip("/").split("/")
+        if len(parts) != 3 or parts[0] != "entry":
+            return None
+        if parts[2] not in {"action", "summarize", "export"}:
+            return None
+        try:
+            return int(parts[1]), parts[2]
+        except ValueError:
+            return None
+
     def _send_json(
         self,
         payload: Any,
@@ -286,6 +445,18 @@ class HeraldRequestHandler(BaseHTTPRequestHandler):
 
     def _send_error(self, status: HTTPStatus, message: str) -> None:
         self._send_json({"error": message}, status)
+
+    def _send_html(
+        self, document: str, status: HTTPStatus = HTTPStatus.OK
+    ) -> None:
+        body = document.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        self.wfile.write(body)
 
     def log_message(self, format: str, *args: object) -> None:
         # Keep normal use quiet; server startup still reports the address.

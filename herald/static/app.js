@@ -32,6 +32,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   document.querySelector("#today").innerHTML = formatToday();
   elements.statusNav.addEventListener("click", changeStatusFilter);
+  elements.list.addEventListener("click", openEntryFromDashboard);
   elements.categoryNav.addEventListener("click", changeCategoryFromButton);
   elements.categorySelect.addEventListener("change", changeCategoryFromSelect);
   elements.search.addEventListener("input", (event) => {
@@ -118,7 +119,7 @@ function renderList() {
   elements.empty.hidden = entries.length !== 0;
   elements.list.innerHTML = entries.map((entry) => `
     <a class="entry-card ${entry.status === "unread" ? "unread" : ""} ${entry.id === state.selectedId ? "selected" : ""}"
-      id="entry-${entry.id}" href="#entry-${entry.id}" data-entry-id="${entry.id}" aria-current="${entry.id === state.selectedId ? "true" : "false"}">
+      id="entry-${entry.id}" href="/entry/${entry.id}" data-entry-id="${entry.id}" aria-current="${entry.id === state.selectedId ? "true" : "false"}">
       <span class="card-top"><span class="card-category">${escapeHtml(entry.source_category)}</span><time>${escapeHtml(relativeDate(entry.published_at))}</time></span>
       <h2>${escapeHtml(entry.title)}</h2>
       <span class="card-summary">${escapeHtml(entry.summary || entry.content || "No summary yet.")}</span>
@@ -156,6 +157,13 @@ function selectEntry(id, updateHash = true) {
   renderList();
   renderReader();
   elements.reader.classList.add("mobile-open");
+}
+
+function openEntryFromDashboard(event) {
+  const link = event.target.closest("[data-entry-id]");
+  if (!link || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  event.preventDefault();
+  selectEntry(Number(link.dataset.entryId));
 }
 
 function entryIdFromHash() {
