@@ -46,6 +46,7 @@ document.addEventListener("DOMContentLoaded", () => {
   document.querySelector("#summarize-action").addEventListener("click", summarizeSelected);
   document.querySelector("#export-action").addEventListener("click", exportSelected);
   document.querySelector("#mobile-back").addEventListener("click", () => elements.reader.classList.remove("mobile-open"));
+  window.addEventListener("hashchange", selectEntryFromHash);
   document.addEventListener("keydown", handleKeyboard);
   loadData();
 });
@@ -79,7 +80,10 @@ async function loadData() {
     renderCategories();
     renderCounts();
     renderList();
-    if (state.selectedId && state.entries.some((entry) => entry.id === state.selectedId)) {
+    const linkedEntryId = entryIdFromHash();
+    if (linkedEntryId && state.entries.some((entry) => entry.id === linkedEntryId)) {
+      selectEntry(linkedEntryId, false);
+    } else if (state.selectedId && state.entries.some((entry) => entry.id === state.selectedId)) {
       renderReader();
     } else if (state.selectedId) {
       state.selectedId = null;
@@ -113,16 +117,13 @@ function renderList() {
   elements.list.hidden = entries.length === 0;
   elements.empty.hidden = entries.length !== 0;
   elements.list.innerHTML = entries.map((entry) => `
-    <button class="entry-card ${entry.status === "unread" ? "unread" : ""} ${entry.id === state.selectedId ? "selected" : ""}"
-      data-entry-id="${entry.id}" type="button" aria-pressed="${entry.id === state.selectedId}">
+    <a class="entry-card ${entry.status === "unread" ? "unread" : ""} ${entry.id === state.selectedId ? "selected" : ""}"
+      id="entry-${entry.id}" href="#entry-${entry.id}" data-entry-id="${entry.id}" aria-current="${entry.id === state.selectedId ? "true" : "false"}">
       <span class="card-top"><span class="card-category">${escapeHtml(entry.source_category)}</span><time>${escapeHtml(relativeDate(entry.published_at))}</time></span>
       <h2>${escapeHtml(entry.title)}</h2>
       <span class="card-summary">${escapeHtml(entry.summary || entry.content || "No summary yet.")}</span>
-      <span class="card-foot"><span>${escapeHtml(entry.source_title)}</span>${entry.status !== "unread" ? `<span class="status-mini ${entry.status}">${escapeHtml(entry.status)}</span>` : ""}</span>
-    </button>`).join("");
-  elements.list.querySelectorAll("[data-entry-id]").forEach((button) => {
-    button.addEventListener("click", () => selectEntry(Number(button.dataset.entryId)));
-  });
+      <span class="card-foot"><span>${escapeHtml(entry.source_title)}</span>${entry.status !== "unread" ? `<span class="status-mini ${entry.status}">${escapeHtml(entry.status)}</span>` : ""}<span class="open-cue">Open →</span></span>
+    </a>`).join("");
 }
 
 function renderCategories() {
@@ -146,11 +147,25 @@ function renderCounts() {
   });
 }
 
-function selectEntry(id) {
+function selectEntry(id, updateHash = true) {
+  if (!state.entries.some((entry) => entry.id === id)) return;
   state.selectedId = id;
+  if (updateHash && window.location.hash !== `#entry-${id}`) {
+    window.history.replaceState(null, "", `#entry-${id}`);
+  }
   renderList();
   renderReader();
   elements.reader.classList.add("mobile-open");
+}
+
+function entryIdFromHash() {
+  const match = window.location.hash.match(/^#entry-(\d+)$/);
+  return match ? Number(match[1]) : null;
+}
+
+function selectEntryFromHash() {
+  const entryId = entryIdFromHash();
+  if (entryId) selectEntry(entryId, false);
 }
 
 function renderReader() {

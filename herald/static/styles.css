@@ -97,7 +97,7 @@ h1 { margin: 0; font: 700 30px/1.15 Georgia, serif; letter-spacing: -.025em; }
 .icon-button svg { width: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; }
 .inbox-meta { display: flex; justify-content: space-between; margin-top: 20px; padding: 0 2px 11px; border-bottom: 1px solid var(--line); color: #89918c; font-size: 10px; text-transform: uppercase; letter-spacing: .07em; }
 .entry-list { padding-bottom: 30px; }
-.entry-card { position: relative; display: block; width: 100%; padding: 18px 16px 17px 20px; border: 0; border-bottom: 1px solid var(--line); color: inherit; background: transparent; text-align: left; transition: background .15s, transform .15s; }
+.entry-card { position: relative; display: block; width: 100%; padding: 18px 16px 17px 20px; border: 0; border-bottom: 1px solid var(--line); color: inherit; background: transparent; text-align: left; text-decoration: none; cursor: pointer; transition: background .15s, transform .15s; }
 .entry-card:hover { background: rgb(255 255 255 / 47%); }
 .entry-card.selected { z-index: 1; margin-left: -1px; background: var(--surface); box-shadow: var(--shadow); transform: translateX(2px); }
 .entry-card.unread::before { content: ""; position: absolute; top: 24px; left: 5px; width: 6px; height: 6px; border-radius: 50%; background: var(--gold); }
@@ -107,6 +107,8 @@ h1 { margin: 0; font: 700 30px/1.15 Georgia, serif; letter-spacing: -.025em; }
 .entry-card.unread h2 { font-weight: 750; }
 .card-summary { display: -webkit-box; margin: 0; overflow: hidden; -webkit-line-clamp: 2; -webkit-box-orient: vertical; color: #657169; font-size: 11px; line-height: 1.55; }
 .card-foot { display: flex; gap: 7px; align-items: center; margin-top: 11px; color: #8d958f; font-size: 10px; }
+.open-cue { margin-left: auto; color: var(--green); font-weight: 750; opacity: .72; }
+.entry-card:hover .open-cue, .entry-card:focus-visible .open-cue { opacity: 1; }
 .status-mini { padding: 2px 6px; border-radius: 8px; color: var(--green); background: var(--green-soft); text-transform: capitalize; }
 .status-mini.discarded { color: var(--red); background: #f0dfdc; }
 .loading-card { height: 118px; border-bottom: 1px solid var(--line); background: linear-gradient(100deg, transparent 15%, rgb(255 255 255 / 52%) 32%, transparent 49%); background-size: 220% 100%; animation: shimmer 1.3s infinite; }

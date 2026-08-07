@@ -76,6 +76,12 @@ class WebTests(unittest.TestCase):
             self.assertIn("text/css", response.headers["Content-Type"])
             self.assertIn("--green", response.read().decode())
 
+        with urlopen(self.base_url + "/static/app.js") as response:
+            script = response.read().decode()
+        self.assertIn('href="#entry-${entry.id}"', script)
+        self.assertIn('window.addEventListener("hashchange"', script)
+        self.assertIn("Open →", script)
+
     def test_lists_and_filters_entries(self) -> None:
         status, entries = self.request("/api/entries?status=unread&category=Demo")
         self.assertEqual(status, 200)
