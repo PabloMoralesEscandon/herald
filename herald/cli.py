@@ -6,8 +6,10 @@ from typing import Sequence
 
 from .config import Settings
 from .demo import load_demo
+from .obsidian import ObsidianExporter
 from .service import HeraldService
 from .storage import Database
+from .summaries import LocalSummarizer
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -21,6 +23,11 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("sources", help="Print configured RSS and Atom sources")
     subparsers.add_parser("seed", help="Add Herald's curated research sources")
     subparsers.add_parser("refresh", help="Fetch all enabled sources")
+    summarize = subparsers.add_parser("summarize", help="Summarize one entry")
+    summarize.add_argument("entry_id", type=int)
+    export = subparsers.add_parser("export", help="Export one kept entry")
+    export.add_argument("entry_id", type=int)
+    subparsers.add_parser("export-kept", help="Export every kept entry")
     subparsers.add_parser("serve", help="Start the local web application")
     return parser
 
@@ -31,7 +38,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     settings.ensure_directories()
     database = Database(settings.database_path)
     database.initialize()
-    service = HeraldService(database)
+    service = HeraldService(
+        database,
+        summarizer=LocalSummarizer(settings.ollama_url, settings.ollama_model),
+        exporter=ObsidianExporter(settings.vault_path),
+    )
 
     if args.command == "init":
         created = service.seed_curated_sources()
@@ -55,6 +66,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         results = service.refresh_all()
         print(json.dumps([result.to_dict() for result in results], indent=2))
         return int(any(result.error for result in results))
+    if args.command == "summarize":
+        result = service.summarize_entry(args.entry_id)
+        print(json.dumps({"summary": result.text, "provider": result.provider}))
+        return 0
+    if args.command == "export":
+        print(service.export_entry(args.entry_id))
+        return 0
+    if args.command == "export-kept":
+        paths = service.export_kept()
+        print(json.dumps([str(path) for path in paths], indent=2))
+        return 0
     if args.command == "serve":
         try:
             from .web import serve

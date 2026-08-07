@@ -4,12 +4,15 @@ import http.client
 import urllib.error
 import urllib.request
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Callable
 from urllib.parse import urlsplit
 
 from .feeds import FeedParseError, parse_feed
+from .obsidian import ObsidianExporter
 from .sources import CURATED_SOURCES
 from .storage import Database
+from .summaries import LocalSummarizer, SummaryProvider, SummaryResult
 
 
 Fetcher = Callable[[str], bytes]
@@ -59,9 +62,18 @@ class RefreshResult:
 
 
 class HeraldService:
-    def __init__(self, database: Database, fetcher: Fetcher | None = None):
+    def __init__(
+        self,
+        database: Database,
+        fetcher: Fetcher | None = None,
+        *,
+        summarizer: SummaryProvider | None = None,
+        exporter: ObsidianExporter | None = None,
+    ):
         self.database = database
         self.fetcher = fetcher or fetch_feed
+        self.summarizer = summarizer or LocalSummarizer()
+        self.exporter = exporter or ObsidianExporter(database.path.parent / "vault")
 
     def seed_curated_sources(self) -> int:
         existing = {source["url"] for source in self.database.list_sources()}
@@ -124,3 +136,25 @@ class HeraldService:
                     )
                 )
         return results
+
+    def summarize_entry(self, entry_id: int) -> SummaryResult:
+        entry = self.database.get_entry(entry_id)
+        if entry is None:
+            raise KeyError(f"Entry {entry_id} does not exist")
+        result = self.summarizer.summarize(entry["title"], entry["content"])
+        self.database.set_summary(entry_id, result.text)
+        return result
+
+    def export_entry(self, entry_id: int) -> Path:
+        entry = self.database.get_entry(entry_id)
+        if entry is None:
+            raise KeyError(f"Entry {entry_id} does not exist")
+        destination = self.exporter.export(entry)
+        self.database.set_exported_path(
+            entry_id, self.exporter.relative_path(destination)
+        )
+        return destination
+
+    def export_kept(self) -> list[Path]:
+        kept = self.database.list_entries(status="kept", limit=500)
+        return [self.export_entry(entry["id"]) for entry in kept]
