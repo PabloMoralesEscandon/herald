@@ -16,6 +16,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body { min-height: 100%; }
 body { margin: 0; background: var(--paper); }
 button, input, select { font: inherit; }

@@ -72,13 +72,15 @@ class WebTests(unittest.TestCase):
         self.assertEqual(response.status, 200)
         self.assertIn("Herald", html)
         self.assertIn("/static/app.js?v=14", html)
-        self.assertIn("/static/styles.css?v=14", html)
+        self.assertIn("/static/styles.css?v=15", html)
         self.assertIn('id="reader-pdf"', html)
 
         with urlopen(self.base_url + "/static/styles.css") as response:
+            styles = response.read().decode()
             self.assertIn("text/css", response.headers["Content-Type"])
+            self.assertIn("[hidden] { display: none !important; }", styles)
             self.assertEqual(response.headers["Cache-Control"], "no-store, max-age=0")
-            self.assertIn("--green", response.read().decode())
+            self.assertIn("--green", styles)
 
         with urlopen(self.base_url + "/static/app.js") as response:
             script = response.read().decode()
