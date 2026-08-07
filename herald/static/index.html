@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <meta name="theme-color" content="#f4f1e8">
+    <title>Herald — Research inbox</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <script src="/static/app.js" defer></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="Herald inbox">
+          <span class="brand-mark" aria-hidden="true">H</span>
+          <span>
+            <strong>Herald</strong>
+            <small>Your technical reading desk</small>
+          </span>
+        </a>
+        <div class="topbar-tools">
+          <label class="search-field">
+            <span class="sr-only">Search articles</span>
+            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m21 21-4.35-4.35m2.35-5.65a8 8 0 1 1-16 0 8 8 0 0 1 16 0Z"/></svg>
+            <input id="search-input" type="search" placeholder="Search your inbox" autocomplete="off">
+            <kbd>/</kbd>
+          </label>
+          <div class="today" id="today" aria-label="Today's date"></div>
+        </div>
+      </header>
+
+      <aside class="sidebar" aria-label="Inbox navigation">
+        <p class="section-label">Library</p>
+        <nav id="status-nav">
+          <button class="nav-item active" data-status="all" type="button">
+            <span><span class="nav-icon">⌂</span>All entries</span><span class="count" data-count="all">0</span>
+          </button>
+          <button class="nav-item" data-status="unread" type="button">
+            <span><span class="nav-icon dot-icon"></span>Unread</span><span class="count" data-count="unread">0</span>
+          </button>
+          <button class="nav-item" data-status="kept" type="button">
+            <span><span class="nav-icon">◇</span>Kept</span><span class="count" data-count="kept">0</span>
+          </button>
+          <button class="nav-item" data-status="read" type="button">
+            <span><span class="nav-icon">✓</span>Read</span><span class="count" data-count="read">0</span>
+          </button>
+          <button class="nav-item" data-status="discarded" type="button">
+            <span><span class="nav-icon">×</span>Discarded</span><span class="count" data-count="discarded">0</span>
+          </button>
+        </nav>
+        <p class="section-label topics-label">Topics</p>
+        <div id="category-nav" class="category-nav"></div>
+        <div class="sidebar-foot">
+          <span class="pulse" aria-hidden="true"></span>
+          <span><strong>Local only</strong><small>Your reading data stays here.</small></span>
+        </div>
+      </aside>
+
+      <main class="workspace">
+        <section class="inbox-pane" aria-labelledby="inbox-title">
+          <div class="pane-heading">
+            <div>
+              <p class="eyebrow">Reading queue</p>
+              <h1 id="inbox-title">All entries</h1>
+            </div>
+            <div class="pane-actions">
+              <label class="select-wrap">
+                <span class="sr-only">Filter category</span>
+                <select id="category-select"><option value="all">All topics</option></select>
+              </label>
+              <button class="icon-button" id="reload-button" type="button" aria-label="Reload inbox" title="Reload inbox">
+                <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M20 6v5h-5M4 18v-5h5m9.7-4A8 8 0 0 0 5.3 6M5.3 16A8 8 0 0 0 18.7 18"/></svg>
+              </button>
+            </div>
+          </div>
+          <div class="inbox-meta"><span id="result-count">Loading…</span><span>Newest first</span></div>
+          <div id="entry-list" class="entry-list" aria-live="polite">
+            <div class="loading-card"></div>
+            <div class="loading-card short"></div>
+          </div>
+          <div id="empty-state" class="empty-state" hidden>
+            <span>∿</span>
+            <h2>Nothing waiting here</h2>
+            <p>Try another filter or clear your search.</p>
+            <button id="clear-filters" class="text-button" type="button">Show everything</button>
+          </div>
+        </section>
+
+        <article class="reader-pane" id="reader-pane" aria-live="polite">
+          <div id="reader-placeholder" class="reader-placeholder">
+            <div class="placeholder-mark">H</div>
+            <h2>Select something worth your attention.</h2>
+            <p>Summaries, source details, and triage controls will appear here.</p>
+            <span><kbd>J</kbd><kbd>K</kbd> to move through the queue</span>
+          </div>
+          <div id="reader-content" class="reader-content" hidden>
+            <div class="reader-toolbar">
+              <button class="mobile-back" id="mobile-back" type="button">← Inbox</button>
+              <span id="reader-status" class="status-chip"></span>
+              <div class="reader-toolbar-actions">
+                <button class="toolbar-button" id="read-action" type="button"></button>
+                <button class="toolbar-button keep" id="keep-action" type="button">◇ Keep</button>
+                <button class="toolbar-button discard" id="discard-action" type="button">× Discard</button>
+              </div>
+            </div>
+            <div class="reader-body">
+              <div class="reader-source">
+                <span id="reader-category"></span>
+                <span aria-hidden="true">·</span>
+                <span id="reader-source"></span>
+              </div>
+              <h2 id="reader-title"></h2>
+              <div class="byline">
+                <span id="reader-author"></span>
+                <span aria-hidden="true">·</span>
+                <time id="reader-date"></time>
+              </div>
+              <section class="summary-card" aria-labelledby="summary-heading">
+                <div class="summary-heading">
+                  <div><span class="spark">✦</span><h3 id="summary-heading">Herald summary</h3></div>
+                  <span>Quick scan</span>
+                </div>
+                <p id="reader-summary"></p>
+              </section>
+              <section class="original-section" aria-labelledby="original-heading">
+                <p class="section-label" id="original-heading">From the article</p>
+                <p id="reader-excerpt"></p>
+              </section>
+              <a id="reader-link" class="open-link" target="_blank" rel="noopener noreferrer">Read original <span>↗</span></a>
+            </div>
+          </div>
+        </article>
+      </main>
+    </div>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  </body>
+</html>
