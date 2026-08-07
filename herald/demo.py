@@ -45,7 +45,8 @@ def load_demo(database: Database) -> int:
     )
     created = 0
     for entry in DEMO_ENTRIES:
-        _, was_created = database.upsert_entry(source_id=source_id, **entry)
+        _, was_created = database.upsert_entry(
+            source_id=source_id, summary_provider="demo", **entry
+        )
         created += int(was_created)
     return created
-

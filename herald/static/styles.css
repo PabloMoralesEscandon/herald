@@ -153,6 +153,11 @@ kbd { padding: 2px 6px; border: 1px solid var(--line); border-radius: 4px; backg
 .summary-action:disabled, .export-link:disabled { cursor: wait; opacity: .55; }
 .spark { color: var(--gold); }
 .summary-card p { margin: 0; color: #31453a; font: 16px/1.65 Georgia, serif; }
+.summary-card .summary-provenance { display: inline-block; margin: -3px 0 14px; padding: 4px 8px; border-radius: 999px; font: 700 9px/1.2 ui-sans-serif, system-ui, sans-serif; letter-spacing: .04em; text-transform: uppercase; }
+.summary-provenance.ai { color: #633d7b; background: #eadff0; }
+.summary-provenance.non-ai { color: var(--green); background: #dce8dd; }
+.summary-provenance.demo { color: #82551f; background: #f1e3cc; }
+.summary-provenance.unknown { color: #636b66; background: #e7e6e1; }
 .original-section { margin-bottom: 31px; }
 .original-section .section-label { margin-left: 0; }
 .original-section p:last-child { margin: 0; color: #526159; font: 14px/1.75 Georgia, serif; }

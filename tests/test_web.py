@@ -71,8 +71,8 @@ class WebTests(unittest.TestCase):
             html = response.read().decode()
         self.assertEqual(response.status, 200)
         self.assertIn("Herald", html)
-        self.assertIn("/static/app.js?v=11", html)
-        self.assertIn("/static/styles.css?v=11", html)
+        self.assertIn("/static/app.js?v=13", html)
+        self.assertIn("/static/styles.css?v=13", html)
 
         with urlopen(self.base_url + "/static/styles.css") as response:
             self.assertIn("text/css", response.headers["Content-Type"])
@@ -176,8 +176,11 @@ class WebTests(unittest.TestCase):
         self.assertIn("https://arxiv.org/pdf/2608.01234", page)
         self.assertIn("Open PDF", page)
         self.assertIn("View abstract", page)
+        self.assertIn("Non-AI · extracted from feed abstract", page)
         self.assertIn("The paper presents a new circuit.", page)
-        self.assertTrue(self.database.get_entry(entry_id)["summary"])
+        entry = self.database.get_entry(entry_id)
+        self.assertTrue(entry["summary"])
+        self.assertEqual(entry["summary_provider"], "extractive")
 
     def test_triage_action_uses_contract_verbs(self) -> None:
         entry_id = self.database.list_entries()[0]["id"]
@@ -225,6 +228,7 @@ class WebTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(payload["provider"], "fallback")
         self.assertTrue(payload["entry"]["summary"])
+        self.assertEqual(payload["entry"]["summary_provider"], "fallback")
 
     def test_kept_entry_can_be_exported(self) -> None:
         entry_id = self.database.list_entries()[0]["id"]

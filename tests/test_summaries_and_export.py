@@ -96,7 +96,9 @@ class SummaryTests(unittest.TestCase):
 
 class _FixedSummarizer:
     def summarize(self, title: str, content: str) -> SummaryResult:
-        return SummaryResult(f"Summary of {title}: {content[:10]}", "test")
+        return SummaryResult(
+            f"Summary of {title}: {content[:10]}", "test", "test-model"
+        )
 
 
 class ExportTests(unittest.TestCase):
@@ -133,6 +135,9 @@ class ExportTests(unittest.TestCase):
 
         self.assertEqual(result.provider, "test")
         self.assertEqual(entry["summary"], result.text)
+        self.assertEqual(entry["summary_provider"], "test")
+        self.assertEqual(entry["summary_model"], "test-model")
+        self.assertTrue(entry["summary_generated_at"])
 
     def test_only_kept_entries_can_be_exported(self) -> None:
         with self.assertRaisesRegex(ValueError, "Only kept"):
@@ -153,7 +158,10 @@ class ExportTests(unittest.TestCase):
         self.assertIn('title: "A: \\"quoted\\" / unsafe\\n# title"', document)
         self.assertIn('author: "Ada \\"A\\"\\nResearcher"', document)
         self.assertIn('category: "ML: RL #research"', document)
+        self.assertIn('summary_provider: "test"', document)
+        self.assertIn('summary_model: "test-model"', document)
         self.assertIn("# A: \"quoted\" / unsafe # title", document)
+        self.assertIn("> Method: test (test-model)", document)
         self.assertIn("> Summary of A:", document)
         self.assertIn("Line two with **Markdown**.", document)
         self.assertEqual(

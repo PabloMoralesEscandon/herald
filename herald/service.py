@@ -114,6 +114,7 @@ class HeraldService:
                 published_at=entry.published_at,
                 content=entry.content,
                 summary=deterministic_summary(entry.title, entry.content),
+                summary_provider="extractive",
             )
             created += int(was_created)
             updated += int(not was_created)
@@ -148,7 +149,12 @@ class HeraldService:
         if entry is None:
             raise KeyError(f"Entry {entry_id} does not exist")
         result = self.summarizer.summarize(entry["title"], entry["content"])
-        self.database.set_summary(entry_id, result.text)
+        self.database.set_summary(
+            entry_id,
+            result.text,
+            provider=result.provider,
+            model=result.model,
+        )
         return result
 
     def export_entry(self, entry_id: int) -> Path:

@@ -32,6 +32,23 @@ ACTION_STATUSES = {
 }
 
 
+def summary_provenance(entry: dict[str, Any]) -> tuple[str, str]:
+    provider = str(entry.get("summary_provider") or "")
+    model = str(entry.get("summary_model") or "")
+    if provider == "ollama":
+        suffix = f" · {model}" if model else ""
+        return f"AI-generated locally{suffix}", "ai"
+    if provider == "extractive":
+        return "Non-AI · extracted from feed abstract", "non-ai"
+    if provider == "fallback":
+        return "Non-AI fallback · local AI unavailable", "non-ai"
+    if provider == "demo":
+        return "Demo summary", "demo"
+    if provider == "unknown":
+        return "Origin unknown · created before provenance tracking", "unknown"
+    return "Not generated", "unknown"
+
+
 class HeraldServer(ThreadingHTTPServer):
     daemon_threads = True
 
@@ -137,7 +154,16 @@ class HeraldRequestHandler(BaseHTTPRequestHandler):
             return
         if not entry["summary"]:
             self.server.database.set_summary(
-                entry_id, deterministic_summary(entry["title"], entry["content"])
+                entry_id,
+                deterministic_summary(entry["title"], entry["content"]),
+                provider="extractive",
+            )
+            entry = self.server.database.get_entry(entry_id)
+        elif entry["summary_provider"] == "unknown" and entry[
+            "summary"
+        ] == deterministic_summary(entry["title"], entry["content"]):
+            self.server.database.set_summary(
+                entry_id, entry["summary"], provider="extractive"
             )
             entry = self.server.database.get_entry(entry_id)
         kept = entry["status"] == "kept"
@@ -163,6 +189,7 @@ class HeraldRequestHandler(BaseHTTPRequestHandler):
             else ""
         )
         original_label = "View abstract" if pdf_url else "Read original"
+        provenance_label, provenance_class = summary_provenance(entry)
         document = f"""<!doctype html>
 <html lang="en">
 <head>
@@ -188,6 +215,7 @@ class HeraldRequestHandler(BaseHTTPRequestHandler):
     </div>
     <section class="summary-card">
       <div class="summary-heading"><div><span class="spark">✦</span><h2>Herald summary</h2></div></div>
+      <p class="summary-provenance {provenance_class}">{escape(provenance_label)}</p>
       <p>{escape(summary)}</p>
     </section>
     <section class="page-excerpt"><h2>From the feed</h2><p>{escape(entry['content'] or 'The feed did not provide an excerpt.')}</p></section>

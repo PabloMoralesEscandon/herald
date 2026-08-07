@@ -168,6 +168,10 @@ function renderReader() {
   date.textContent = longDate(entry.published_at);
   date.dateTime = entry.published_at || "";
   setText("#reader-summary", entry.summary || "A summary has not been generated for this entry yet.");
+  const provenance = summaryProvenance(entry);
+  const provenanceElement = document.querySelector("#reader-summary-provider");
+  provenanceElement.textContent = provenance.label;
+  provenanceElement.className = `summary-provenance ${provenance.kind}`;
   setText("#reader-excerpt", entry.content || "The feed did not provide an article excerpt.");
   const link = document.querySelector("#reader-link");
   link.href = entry.url;
@@ -311,6 +315,14 @@ function handleKeyboard(event) {
 }
 
 function selectedEntry() { return state.entries.find((entry) => entry.id === state.selectedId); }
+function summaryProvenance(entry) {
+  if (entry.summary_provider === "ollama") return { label: `AI-generated locally${entry.summary_model ? ` · ${entry.summary_model}` : ""}`, kind: "ai" };
+  if (entry.summary_provider === "extractive") return { label: "Non-AI · extracted from feed abstract", kind: "non-ai" };
+  if (entry.summary_provider === "fallback") return { label: "Non-AI fallback · local AI unavailable", kind: "non-ai" };
+  if (entry.summary_provider === "demo") return { label: "Demo summary", kind: "demo" };
+  if (entry.summary_provider === "unknown") return { label: "Origin unknown · created before provenance tracking", kind: "unknown" };
+  return { label: "Not generated", kind: "unknown" };
+}
 function filterTitle() {
   if (state.category !== "all") return state.category;
   return { all: "All entries", unread: "Unread", read: "Read", kept: "Kept", discarded: "Discarded" }[state.status];

@@ -33,6 +33,9 @@ CREATE TABLE IF NOT EXISTS entries (
     discovered_at TEXT NOT NULL,
     content TEXT NOT NULL DEFAULT '',
     summary TEXT NOT NULL DEFAULT '',
+    summary_provider TEXT NOT NULL DEFAULT '',
+    summary_model TEXT NOT NULL DEFAULT '',
+    summary_generated_at TEXT,
     status TEXT NOT NULL DEFAULT 'unread'
         CHECK (status IN ('unread', 'read', 'kept', 'discarded')),
     exported_path TEXT,
@@ -68,6 +71,27 @@ class Database:
     def initialize(self) -> None:
         with self.connect() as connection:
             connection.executescript(SCHEMA)
+            columns = {
+                str(row["name"])
+                for row in connection.execute("PRAGMA table_info(entries)")
+            }
+            migrations = {
+                "summary_provider": "TEXT NOT NULL DEFAULT ''",
+                "summary_model": "TEXT NOT NULL DEFAULT ''",
+                "summary_generated_at": "TEXT",
+            }
+            for name, definition in migrations.items():
+                if name not in columns:
+                    connection.execute(
+                        f"ALTER TABLE entries ADD COLUMN {name} {definition}"
+                    )
+            connection.execute(
+                """
+                UPDATE entries
+                SET summary_provider = 'unknown'
+                WHERE summary <> '' AND summary_provider = ''
+                """
+            )
 
     def add_source(self, title: str, url: str, category: str = "Unsorted") -> int:
         with self.connect() as connection:
@@ -106,6 +130,8 @@ class Database:
         published_at: str | None = None,
         content: str = "",
         summary: str = "",
+        summary_provider: str = "",
+        summary_model: str = "",
     ) -> tuple[int, bool]:
         with self.connect() as connection:
             existing = connection.execute(
@@ -130,6 +156,18 @@ class Database:
                         summary = CASE
                             WHEN summary = '' AND ? <> '' THEN ?
                             ELSE summary
+                        END,
+                        summary_provider = CASE
+                            WHEN summary = '' AND ? <> '' THEN ?
+                            ELSE summary_provider
+                        END,
+                        summary_model = CASE
+                            WHEN summary = '' AND ? <> '' THEN ?
+                            ELSE summary_model
+                        END,
+                        summary_generated_at = CASE
+                            WHEN summary = '' AND ? <> '' THEN ?
+                            ELSE summary_generated_at
                         END
                     WHERE id = ?
                     """,
@@ -142,6 +180,12 @@ class Database:
                         content,
                         summary,
                         summary,
+                        summary,
+                        summary_provider,
+                        summary,
+                        summary_model,
+                        summary,
+                        utc_now(),
                         existing["id"],
                     ),
                 )
@@ -151,8 +195,9 @@ class Database:
                 """
                 INSERT INTO entries(
                     source_id, guid, url, title, author, published_at,
-                    discovered_at, content, summary
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    discovered_at, content, summary, summary_provider,
+                    summary_model, summary_generated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     source_id,
@@ -164,6 +209,9 @@ class Database:
                     utc_now(),
                     content,
                     summary,
+                    summary_provider,
+                    summary_model,
+                    utc_now() if summary else None,
                 ),
             )
             return int(cursor.lastrowid), True
@@ -249,10 +297,23 @@ class Database:
             )
             return cursor.rowcount == 1
 
-    def set_summary(self, entry_id: int, summary: str) -> bool:
+    def set_summary(
+        self,
+        entry_id: int,
+        summary: str,
+        *,
+        provider: str,
+        model: str | None = None,
+    ) -> bool:
         with self.connect() as connection:
             cursor = connection.execute(
-                "UPDATE entries SET summary = ? WHERE id = ?", (summary, entry_id)
+                """
+                UPDATE entries
+                SET summary = ?, summary_provider = ?, summary_model = ?,
+                    summary_generated_at = ?
+                WHERE id = ?
+                """,
+                (summary, provider, model or "", utc_now(), entry_id),
             )
             return cursor.rowcount == 1
 

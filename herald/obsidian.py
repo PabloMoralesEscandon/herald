@@ -42,12 +42,18 @@ def render_markdown(entry: dict[str, Any]) -> str:
         f"published_at: {_yaml_string(entry.get('published_at'))}",
         f"discovered_at: {_yaml_string(entry.get('discovered_at'))}",
         f"status: {_yaml_string(entry.get('status'))}",
+        f"summary_provider: {_yaml_string(entry.get('summary_provider'))}",
+        f"summary_model: {_yaml_string(entry.get('summary_model'))}",
+        f"summary_generated_at: {_yaml_string(entry.get('summary_generated_at'))}",
         "tags:",
         *(f"  - {_yaml_string(tag)}" for tag in tags),
         "---",
     ]
     title = str(entry.get("title") or "Untitled").replace("\n", " ").strip()
     summary = str(entry.get("summary") or "No summary is available.").strip()
+    provider = str(entry.get("summary_provider") or "unknown")
+    model = str(entry.get("summary_model") or "")
+    provenance = f"{provider} ({model})" if model else provider
     content = str(entry.get("content") or "No article text was supplied by the feed.")
     source_url = str(entry.get("url") or "")
     source_title = str(entry.get("source_title") or "Unknown source")
@@ -59,6 +65,8 @@ def render_markdown(entry: dict[str, Any]) -> str:
         f"# {title}",
         "",
         "> [!abstract] Summary",
+        f"> Method: {provenance}",
+        ">",
         _blockquote(summary),
         "",
         "## Article text",

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -56,6 +57,42 @@ class FoundationTests(unittest.TestCase):
         self.assertEqual(counts["statuses"]["kept"], 1)
         self.assertEqual(counts["statuses"]["unread"], 1)
         self.assertEqual(counts["categories"]["Demo"], 2)
+
+    def test_existing_database_gains_summary_provenance_columns(self) -> None:
+        path = Path(self.temporary_directory.name) / "legacy.db"
+        connection = sqlite3.connect(path)
+        connection.executescript(
+            """
+            CREATE TABLE sources (
+                id INTEGER PRIMARY KEY, title TEXT NOT NULL, url TEXT NOT NULL UNIQUE,
+                category TEXT NOT NULL DEFAULT 'Unsorted', enabled INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE entries (
+                id INTEGER PRIMARY KEY, source_id INTEGER NOT NULL REFERENCES sources(id),
+                guid TEXT NOT NULL, url TEXT NOT NULL, title TEXT NOT NULL,
+                author TEXT NOT NULL DEFAULT '', published_at TEXT, discovered_at TEXT NOT NULL,
+                content TEXT NOT NULL DEFAULT '', summary TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'unread', exported_path TEXT,
+                UNIQUE(source_id, guid)
+            );
+            INSERT INTO sources VALUES (1, 'Legacy', 'https://example.org/feed', 'Test', 1, '2026-01-01');
+            INSERT INTO entries VALUES (
+                1, 1, 'legacy', 'https://example.org/article', 'Legacy article', '', NULL,
+                '2026-01-01', 'Legacy content.', 'Legacy summary.', 'unread', NULL
+            );
+            """
+        )
+        connection.commit()
+        connection.close()
+
+        database = Database(path)
+        database.initialize()
+        entry = database.get_entry(1)
+
+        self.assertEqual(entry["summary_provider"], "unknown")
+        self.assertEqual(entry["summary_model"], "")
+        self.assertIsNone(entry["summary_generated_at"])
 
 
 if __name__ == "__main__":
