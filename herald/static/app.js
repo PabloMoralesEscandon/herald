@@ -37,11 +37,13 @@ document.addEventListener("DOMContentLoaded", () => {
     state.search = event.target.value.trim().toLowerCase();
     renderList();
   });
-  elements.reload.addEventListener("click", loadData);
+  elements.reload.addEventListener("click", refreshFeeds);
   document.querySelector("#clear-filters").addEventListener("click", clearFilters);
   document.querySelector("#read-action").addEventListener("click", toggleRead);
   document.querySelector("#keep-action").addEventListener("click", () => actOnSelected("keep"));
   document.querySelector("#discard-action").addEventListener("click", () => actOnSelected("discard"));
+  document.querySelector("#summarize-action").addEventListener("click", summarizeSelected);
+  document.querySelector("#export-action").addEventListener("click", exportSelected);
   document.querySelector("#mobile-back").addEventListener("click", () => elements.reader.classList.remove("mobile-open"));
   document.addEventListener("keydown", handleKeyboard);
   loadData();
@@ -166,6 +168,65 @@ function renderReader() {
   const discardButton = document.querySelector("#discard-action");
   keepButton.classList.toggle("active", entry.status === "kept");
   discardButton.classList.toggle("active", entry.status === "discarded");
+  const exportButton = document.querySelector("#export-action");
+  exportButton.disabled = entry.status !== "kept";
+  exportButton.title = entry.status === "kept" ? "Write this note to your vault" : "Keep the entry before exporting";
+  exportButton.dataset.exported = entry.exported_path ? "true" : "false";
+}
+
+async function refreshFeeds() {
+  elements.reload.classList.add("loading");
+  elements.reload.disabled = true;
+  try {
+    const result = await api("/api/refresh", { method: "POST", body: "{}" });
+    await loadData();
+    const message = result.errors
+      ? `Added ${result.created} entries; ${result.errors} sources could not be reached`
+      : `Added ${result.created} new entries`;
+    showToast(message, result.errors > 0 && result.created === 0);
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    elements.reload.classList.remove("loading");
+    elements.reload.disabled = false;
+  }
+}
+
+async function summarizeSelected() {
+  const entry = selectedEntry();
+  if (!entry) return;
+  const button = document.querySelector("#summarize-action");
+  button.disabled = true;
+  button.textContent = "Working…";
+  try {
+    const result = await api(`/api/entries/${entry.id}/summarize`, { method: "POST", body: "{}" });
+    state.entries = state.entries.map((item) => item.id === result.entry.id ? result.entry : item);
+    renderList();
+    renderReader();
+    showToast(result.provider === "ollama" ? "Summary generated locally" : "Summary generated with offline fallback");
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    button.disabled = false;
+    button.textContent = "Generate";
+  }
+}
+
+async function exportSelected() {
+  const entry = selectedEntry();
+  if (!entry) return;
+  const button = document.querySelector("#export-action");
+  button.disabled = true;
+  try {
+    const result = await api(`/api/entries/${entry.id}/export`, { method: "POST", body: "{}" });
+    state.entries = state.entries.map((item) => item.id === result.entry.id ? result.entry : item);
+    renderReader();
+    showToast(`Exported to ${result.entry.exported_path}`);
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    button.disabled = selectedEntry()?.status !== "kept";
+  }
 }
 
 async function actOnSelected(action) {

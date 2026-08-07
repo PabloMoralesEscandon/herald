@@ -125,15 +125,35 @@ class WebTests(unittest.TestCase):
         _, sources = self.request("/api/sources")
         self.assertEqual(len(sources), 2)
 
-    def test_future_service_routes_fail_explicitly(self) -> None:
+    def test_summary_route_uses_offline_fallback(self) -> None:
         entry_id = self.database.list_entries()[0]["id"]
         status, payload = self.request(
             f"/api/entries/{entry_id}/summarize",
             method="POST",
             payload={},
         )
-        self.assertEqual(status, 501)
-        self.assertIn("error", payload)
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["provider"], "fallback")
+        self.assertTrue(payload["entry"]["summary"])
+
+    def test_kept_entry_can_be_exported(self) -> None:
+        entry_id = self.database.list_entries()[0]["id"]
+        status, payload = self.request(
+            f"/api/entries/{entry_id}/export", method="POST", payload={}
+        )
+        self.assertEqual(status, 409)
+        self.assertIn("Only kept", payload["error"])
+
+        self.database.set_status(entry_id, "kept")
+        status, payload = self.request(
+            f"/api/entries/{entry_id}/export", method="POST", payload={}
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(Path(payload["path"]).is_file())
+        self.assertEqual(
+            payload["entry"]["exported_path"],
+            "Herald/Demo/000001 - A Low-Latency Interconnect for Modular Chiplets.md",
+        )
 
 
 if __name__ == "__main__":

@@ -146,6 +146,9 @@ kbd { padding: 2px 6px; border: 1px solid var(--line); border-radius: 4px; backg
 .summary-heading > div { display: flex; gap: 8px; align-items: center; }
 .summary-heading h3 { margin: 0; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
 .summary-heading > span { color: #839087; font-size: 9px; letter-spacing: .08em; text-transform: uppercase; }
+.summary-action { border: 0; padding: 5px 8px; border-radius: 6px; color: var(--green); background: #dfe9e0; font: inherit; font-size: 9px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.summary-action:hover { background: #d2e0d4; }
+.summary-action:disabled, .export-link:disabled { cursor: wait; opacity: .55; }
 .spark { color: var(--gold); }
 .summary-card p { margin: 0; color: #31453a; font: 16px/1.65 Georgia, serif; }
 .original-section { margin-bottom: 31px; }
@@ -153,6 +156,10 @@ kbd { padding: 2px 6px; border: 1px solid var(--line); border-radius: 4px; backg
 .original-section p:last-child { margin: 0; color: #526159; font: 14px/1.75 Georgia, serif; }
 .open-link { display: inline-flex; gap: 10px; align-items: center; padding: 10px 14px; border-radius: 8px; color: #f7f5ee; background: var(--green); text-decoration: none; font-size: 11px; font-weight: 700; }
 .open-link:hover { background: #1c4936; }
+.reader-final-actions { display: flex; flex-wrap: wrap; gap: 9px; align-items: center; }
+.export-link { min-height: 35px; padding: 9px 13px; border: 1px solid var(--green); border-radius: 8px; color: var(--green); background: transparent; font-size: 11px; font-weight: 700; }
+.export-link:hover:not(:disabled) { background: var(--green-soft); }
+.export-link[data-exported="true"]::after { content: " ✓"; }
 .toast { position: fixed; z-index: 20; right: 24px; bottom: 24px; max-width: 340px; padding: 11px 15px; border-radius: 8px; color: white; background: #26372e; box-shadow: var(--shadow); font-size: 11px; opacity: 0; pointer-events: none; transform: translateY(8px); transition: opacity .2s, transform .2s; }
 .toast.show { opacity: 1; transform: translateY(0); }
 .toast.error { background: var(--red); }

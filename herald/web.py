@@ -9,7 +9,10 @@ from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
 from .config import Settings
+from .obsidian import ObsidianExporter
+from .service import HeraldService
 from .storage import Database
+from .summaries import LocalSummarizer
 
 
 STATIC_DIR = Path(__file__).with_name("static")
@@ -35,10 +38,12 @@ class HeraldServer(ThreadingHTTPServer):
         server_address: tuple[str, int],
         database: Database,
         settings: Settings,
+        service: HeraldService,
     ) -> None:
         super().__init__(server_address, HeraldRequestHandler)
         self.database = database
         self.settings = settings
+        self.service = service
 
 
 class HeraldRequestHandler(BaseHTTPRequestHandler):
@@ -67,10 +72,7 @@ class HeraldRequestHandler(BaseHTTPRequestHandler):
             self._add_source()
             return
         if path == "/api/refresh":
-            self._send_error(
-                HTTPStatus.NOT_IMPLEMENTED,
-                "RSS refresh is not available in this build",
-            )
+            self._refresh()
             return
         entry_action = self._entry_subroute(path, "action")
         if entry_action is not None:
@@ -78,17 +80,11 @@ class HeraldRequestHandler(BaseHTTPRequestHandler):
             return
         entry_summary = self._entry_subroute(path, "summarize")
         if entry_summary is not None:
-            self._send_error(
-                HTTPStatus.NOT_IMPLEMENTED,
-                "Summary generation is not available in this build",
-            )
+            self._summarize(entry_summary)
             return
         entry_export = self._entry_subroute(path, "export")
         if entry_export is not None:
-            self._send_error(
-                HTTPStatus.NOT_IMPLEMENTED,
-                "Obsidian export is not available in this build",
-            )
+            self._export(entry_export)
             return
         self._send_error(HTTPStatus.NOT_FOUND, "Not found")
 
@@ -172,6 +168,53 @@ class HeraldRequestHandler(BaseHTTPRequestHandler):
             return
         self._send_json(self.server.database.get_entry(entry_id))
 
+    def _refresh(self) -> None:
+        results = self.server.service.refresh_all()
+        payload = [result.to_dict() for result in results]
+        self._send_json(
+            {
+                "sources": payload,
+                "created": sum(result.created for result in results),
+                "updated": sum(result.updated for result in results),
+                "errors": sum(result.error is not None for result in results),
+            }
+        )
+
+    def _summarize(self, entry_id: int) -> None:
+        try:
+            result = self.server.service.summarize_entry(entry_id)
+        except KeyError:
+            self._send_error(HTTPStatus.NOT_FOUND, "Entry not found")
+            return
+        entry = self.server.database.get_entry(entry_id)
+        self._send_json(
+            {
+                "entry": entry,
+                "provider": result.provider,
+                "model": result.model,
+                "fallback_reason": result.fallback_reason,
+            }
+        )
+
+    def _export(self, entry_id: int) -> None:
+        try:
+            destination = self.server.service.export_entry(entry_id)
+        except KeyError:
+            self._send_error(HTTPStatus.NOT_FOUND, "Entry not found")
+            return
+        except ValueError as error:
+            self._send_error(HTTPStatus.CONFLICT, str(error))
+            return
+        except OSError as error:
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, f"Export failed: {error}")
+            return
+        self._send_json(
+            {
+                "entry": self.server.database.get_entry(entry_id),
+                "path": str(destination),
+            }
+        )
+
     def _read_json(self) -> dict[str, Any] | None:
         if "application/json" not in self.headers.get("Content-Type", ""):
             self._send_error(
@@ -252,11 +295,18 @@ def make_server(
     *,
     host: str | None = None,
     port: int | None = None,
+    service: HeraldService | None = None,
 ) -> HeraldServer:
+    active_service = service or HeraldService(
+        database,
+        summarizer=LocalSummarizer(settings.ollama_url, settings.ollama_model),
+        exporter=ObsidianExporter(settings.vault_path),
+    )
     return HeraldServer(
         (host if host is not None else settings.host, port if port is not None else settings.port),
         database,
         settings,
+        active_service,
     )
 
 

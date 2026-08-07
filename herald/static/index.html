@@ -69,7 +69,7 @@
                 <span class="sr-only">Filter category</span>
                 <select id="category-select"><option value="all">All topics</option></select>
               </label>
-              <button class="icon-button" id="reload-button" type="button" aria-label="Reload inbox" title="Reload inbox">
+              <button class="icon-button" id="reload-button" type="button" aria-label="Fetch new entries" title="Fetch new entries">
                 <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M20 6v5h-5M4 18v-5h5m9.7-4A8 8 0 0 0 5.3 6M5.3 16A8 8 0 0 0 18.7 18"/></svg>
               </button>
             </div>
@@ -119,7 +119,7 @@
               <section class="summary-card" aria-labelledby="summary-heading">
                 <div class="summary-heading">
                   <div><span class="spark">✦</span><h3 id="summary-heading">Herald summary</h3></div>
-                  <span>Quick scan</span>
+                  <button class="summary-action" id="summarize-action" type="button">Generate</button>
                 </div>
                 <p id="reader-summary"></p>
               </section>
@@ -127,7 +127,10 @@
                 <p class="section-label" id="original-heading">From the article</p>
                 <p id="reader-excerpt"></p>
               </section>
-              <a id="reader-link" class="open-link" target="_blank" rel="noopener noreferrer">Read original <span>↗</span></a>
+              <div class="reader-final-actions">
+                <a id="reader-link" class="open-link" target="_blank" rel="noopener noreferrer">Read original <span>↗</span></a>
+                <button id="export-action" class="export-link" type="button">Export to Obsidian</button>
+              </div>
             </div>
           </div>
         </article>
