@@ -60,6 +60,9 @@ class HeraldRequestHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/sources":
             self._send_json(self.server.database.list_sources())
             return
+        if parsed.path == "/api/stats":
+            self._send_json(self.server.database.entry_counts())
+            return
         entry_id = self._entry_id(parsed.path)
         if entry_id is not None:
             self._get_entry(entry_id)

@@ -45,7 +45,18 @@ class FoundationTests(unittest.TestCase):
         self.assertEqual(settings.port, 9000)
         self.assertEqual(settings.vault_path, root / "notes")
 
+    def test_entry_counts_cover_complete_database(self) -> None:
+        load_demo(self.database)
+        first = self.database.list_entries()[0]
+        self.database.set_status(first["id"], "kept")
+
+        counts = self.database.entry_counts()
+
+        self.assertEqual(counts["total"], 2)
+        self.assertEqual(counts["statuses"]["kept"], 1)
+        self.assertEqual(counts["statuses"]["unread"], 1)
+        self.assertEqual(counts["categories"]["Demo"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()
-

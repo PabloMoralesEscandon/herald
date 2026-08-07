@@ -5,6 +5,7 @@ All responses use JSON unless otherwise noted.
 ## Entries
 
 - `GET /api/entries?status=unread&category=Machine%20Learning`
+- `GET /api/stats` for full-database status and category counts
 - `GET /api/entries/{id}`
 - `POST /api/entries/{id}/action` with `{"action":"read|unread|keep|discard"}`
 - `POST /api/entries/{id}/summarize`
@@ -21,4 +22,3 @@ An entry contains `id`, `title`, `url`, `author`, `published_at`, `content`,
 
 Errors have the shape `{"error":"human-readable message"}` and an appropriate
 HTTP status.
-

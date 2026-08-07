@@ -82,6 +82,27 @@ class WebTests(unittest.TestCase):
         self.assertEqual(len(entries), 2)
         self.assertTrue(all(entry["source_category"] == "Demo" for entry in entries))
 
+    def test_stats_are_not_limited_to_visible_page(self) -> None:
+        source_id = self.database.add_source(
+            "Large feed", "https://example.org/large.xml", "Machine Learning"
+        )
+        for index in range(510):
+            self.database.upsert_entry(
+                source_id=source_id,
+                guid=f"large-{index}",
+                url=f"https://example.org/large/{index}",
+                title=f"Large entry {index}",
+            )
+
+        status, stats = self.request("/api/stats")
+        self.assertEqual(status, 200)
+        self.assertEqual(stats["total"], 512)
+        self.assertEqual(stats["categories"]["Demo"], 2)
+
+        status, entries = self.request("/api/entries?category=Demo&limit=500")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(entries), 2)
+
     def test_gets_an_entry(self) -> None:
         entry_id = self.database.list_entries()[0]["id"]
         status, entry = self.request(f"/api/entries/{entry_id}")

@@ -211,6 +211,32 @@ class Database:
             ).fetchall()
             return [dict(row) for row in rows]
 
+    def entry_counts(self) -> dict[str, Any]:
+        with self.connect() as connection:
+            total = int(connection.execute("SELECT COUNT(*) FROM entries").fetchone()[0])
+            statuses = {status: 0 for status in sorted(VALID_STATUSES)}
+            statuses.update(
+                {
+                    str(row["status"]): int(row["count"])
+                    for row in connection.execute(
+                        "SELECT status, COUNT(*) AS count FROM entries GROUP BY status"
+                    )
+                }
+            )
+            categories = {
+                str(row["category"]): int(row["count"])
+                for row in connection.execute(
+                    """
+                    SELECT sources.category, COUNT(entries.id) AS count
+                    FROM sources
+                    LEFT JOIN entries ON entries.source_id = sources.id
+                    GROUP BY sources.category
+                    ORDER BY sources.category
+                    """
+                )
+            }
+        return {"total": total, "statuses": statuses, "categories": categories}
+
     def set_status(self, entry_id: int, status: str) -> bool:
         if status not in VALID_STATUSES:
             raise ValueError(f"Unknown status: {status}")

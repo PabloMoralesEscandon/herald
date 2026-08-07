@@ -7,6 +7,7 @@ const state = {
   category: "all",
   search: "",
   selectedId: null,
+  stats: { total: 0, statuses: {}, categories: {} },
 };
 
 const elements = {};
@@ -64,13 +65,26 @@ async function loadData() {
   elements.reload.classList.add("loading");
   elements.reload.disabled = true;
   try {
-    const [entries, sources] = await Promise.all([api("/api/entries?limit=500"), api("/api/sources")]);
+    const params = new URLSearchParams({ limit: "500" });
+    if (state.status !== "all") params.set("status", state.status);
+    if (state.category !== "all") params.set("category", state.category);
+    const [entries, sources, stats] = await Promise.all([
+      api(`/api/entries?${params}`),
+      api("/api/sources"),
+      api("/api/stats"),
+    ]);
     state.entries = entries;
     state.sources = sources;
+    state.stats = stats;
     renderCategories();
     renderCounts();
     renderList();
-    if (state.selectedId && state.entries.some((entry) => entry.id === state.selectedId)) renderReader();
+    if (state.selectedId && state.entries.some((entry) => entry.id === state.selectedId)) {
+      renderReader();
+    } else if (state.selectedId) {
+      state.selectedId = null;
+      renderReader();
+    }
   } catch (error) {
     showToast(error.message, true);
     elements.list.innerHTML = `<div class="empty-state"><h2>Could not load the inbox</h2><p>${escapeHtml(error.message)}</p></div>`;
@@ -127,7 +141,7 @@ function renderCategories() {
 
 function renderCounts() {
   ["all", "unread", "read", "kept", "discarded"].forEach((status) => {
-    const count = status === "all" ? state.entries.length : state.entries.filter((entry) => entry.status === status).length;
+    const count = status === "all" ? state.stats.total : (state.stats.statuses[status] || 0);
     document.querySelector(`[data-count="${status}"]`).textContent = count;
   });
 }
@@ -252,7 +266,7 @@ function changeStatusFilter(event) {
   if (!button) return;
   state.status = button.dataset.status;
   elements.statusNav.querySelectorAll("[data-status]").forEach((item) => item.classList.toggle("active", item === button));
-  renderList();
+  loadData();
 }
 
 function changeCategoryFromButton(event) {
@@ -267,7 +281,7 @@ function setCategory(category) {
   state.category = category;
   elements.categorySelect.value = category;
   elements.categoryNav.querySelectorAll("[data-category]").forEach((button) => button.classList.toggle("active", button.dataset.category === category));
-  renderList();
+  loadData();
 }
 
 function clearFilters() {
@@ -278,7 +292,7 @@ function clearFilters() {
   elements.categorySelect.value = "all";
   elements.statusNav.querySelectorAll("[data-status]").forEach((button) => button.classList.toggle("active", button.dataset.status === "all"));
   elements.categoryNav.querySelectorAll("[data-category]").forEach((button) => button.classList.remove("active"));
-  renderList();
+  loadData();
 }
 
 function handleKeyboard(event) {
