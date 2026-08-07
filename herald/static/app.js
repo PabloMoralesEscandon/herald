@@ -32,7 +32,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
   document.querySelector("#today").innerHTML = formatToday();
   elements.statusNav.addEventListener("click", changeStatusFilter);
-  elements.list.addEventListener("click", openEntryFromDashboard);
   elements.categoryNav.addEventListener("click", changeCategoryFromButton);
   elements.categorySelect.addEventListener("change", changeCategoryFromSelect);
   elements.search.addEventListener("input", (event) => {
@@ -47,7 +46,6 @@ document.addEventListener("DOMContentLoaded", () => {
   document.querySelector("#summarize-action").addEventListener("click", summarizeSelected);
   document.querySelector("#export-action").addEventListener("click", exportSelected);
   document.querySelector("#mobile-back").addEventListener("click", () => elements.reader.classList.remove("mobile-open"));
-  window.addEventListener("hashchange", selectEntryFromHash);
   document.addEventListener("keydown", handleKeyboard);
   loadData();
 });
@@ -81,10 +79,7 @@ async function loadData() {
     renderCategories();
     renderCounts();
     renderList();
-    const linkedEntryId = entryIdFromHash();
-    if (linkedEntryId && state.entries.some((entry) => entry.id === linkedEntryId)) {
-      selectEntry(linkedEntryId, false);
-    } else if (state.selectedId && state.entries.some((entry) => entry.id === state.selectedId)) {
+    if (state.selectedId && state.entries.some((entry) => entry.id === state.selectedId)) {
       renderReader();
     } else if (state.selectedId) {
       state.selectedId = null;
@@ -148,32 +143,12 @@ function renderCounts() {
   });
 }
 
-function selectEntry(id, updateHash = true) {
+function selectEntry(id) {
   if (!state.entries.some((entry) => entry.id === id)) return;
   state.selectedId = id;
-  if (updateHash && window.location.hash !== `#entry-${id}`) {
-    window.history.replaceState(null, "", `#entry-${id}`);
-  }
   renderList();
   renderReader();
   elements.reader.classList.add("mobile-open");
-}
-
-function openEntryFromDashboard(event) {
-  const link = event.target.closest("[data-entry-id]");
-  if (!link || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-  event.preventDefault();
-  selectEntry(Number(link.dataset.entryId));
-}
-
-function entryIdFromHash() {
-  const match = window.location.hash.match(/^#entry-(\d+)$/);
-  return match ? Number(match[1]) : null;
-}
-
-function selectEntryFromHash() {
-  const entryId = entryIdFromHash();
-  if (entryId) selectEntry(entryId, false);
 }
 
 function renderReader() {

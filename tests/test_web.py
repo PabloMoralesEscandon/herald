@@ -71,8 +71,8 @@ class WebTests(unittest.TestCase):
             html = response.read().decode()
         self.assertEqual(response.status, 200)
         self.assertIn("Herald", html)
-        self.assertIn("/static/app.js?v=10", html)
-        self.assertIn("/static/styles.css?v=10", html)
+        self.assertIn("/static/app.js?v=11", html)
+        self.assertIn("/static/styles.css?v=11", html)
 
         with urlopen(self.base_url + "/static/styles.css") as response:
             self.assertIn("text/css", response.headers["Content-Type"])
@@ -82,7 +82,8 @@ class WebTests(unittest.TestCase):
         with urlopen(self.base_url + "/static/app.js") as response:
             script = response.read().decode()
         self.assertIn('href="/entry/${entry.id}"', script)
-        self.assertIn('window.addEventListener("hashchange"', script)
+        self.assertNotIn("openEntryFromDashboard", script)
+        self.assertNotIn("#entry-${id}", script)
         self.assertIn("Open →", script)
 
     def test_lists_and_filters_entries(self) -> None:
