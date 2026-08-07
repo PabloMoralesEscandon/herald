@@ -6,6 +6,7 @@ from typing import Sequence
 
 from .config import Settings
 from .demo import load_demo
+from .service import HeraldService
 from .storage import Database
 
 
@@ -17,6 +18,9 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("init", help="Create the local database and vault")
     subparsers.add_parser("demo", help="Load deterministic sample articles")
     subparsers.add_parser("list", help="Print current inbox entries")
+    subparsers.add_parser("sources", help="Print configured RSS and Atom sources")
+    subparsers.add_parser("seed", help="Add Herald's curated research sources")
+    subparsers.add_parser("refresh", help="Fetch all enabled sources")
     subparsers.add_parser("serve", help="Start the local web application")
     return parser
 
@@ -27,9 +31,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     settings.ensure_directories()
     database = Database(settings.database_path)
     database.initialize()
+    service = HeraldService(database)
 
     if args.command == "init":
-        print(f"Herald initialized at {settings.data_dir}")
+        created = service.seed_curated_sources()
+        print(f"Herald initialized at {settings.data_dir} ({created} sources added)")
         return 0
     if args.command == "demo":
         created = load_demo(database)
@@ -38,6 +44,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "list":
         print(json.dumps(database.list_entries(), indent=2))
         return 0
+    if args.command == "sources":
+        print(json.dumps(service.list_sources(), indent=2))
+        return 0
+    if args.command == "seed":
+        created = service.seed_curated_sources()
+        print(f"Added {created} curated sources")
+        return 0
+    if args.command == "refresh":
+        results = service.refresh_all()
+        print(json.dumps([result.to_dict() for result in results], indent=2))
+        return int(any(result.error for result in results))
     if args.command == "serve":
         try:
             from .web import serve
@@ -51,4 +68,3 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

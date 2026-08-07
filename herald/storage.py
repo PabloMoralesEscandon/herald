@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS entries (
 
 CREATE INDEX IF NOT EXISTS entries_status_idx ON entries(status);
 CREATE INDEX IF NOT EXISTS entries_published_idx ON entries(published_at DESC);
+CREATE INDEX IF NOT EXISTS entries_url_idx ON entries(url);
 """
 
 
@@ -108,8 +109,17 @@ class Database:
     ) -> tuple[int, bool]:
         with self.connect() as connection:
             existing = connection.execute(
-                "SELECT id FROM entries WHERE source_id = ? AND guid = ?",
-                (source_id, guid),
+                """
+                SELECT id FROM entries
+                WHERE (source_id = ? AND guid = ?)
+                   OR (? <> '' AND url = ?)
+                ORDER BY CASE
+                    WHEN source_id = ? AND guid = ? THEN 0
+                    ELSE 1
+                END
+                LIMIT 1
+                """,
+                (source_id, guid, url, url, source_id, guid),
             ).fetchone()
             if existing:
                 connection.execute(
@@ -224,4 +234,3 @@ class Database:
                 (exported_path, entry_id),
             )
             return cursor.rowcount == 1
-

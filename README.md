@@ -9,7 +9,11 @@ dependencies beyond Python 3.11.
 
 ```bash
 python -m herald.cli init
+python -m herald.cli refresh
 python -m herald.cli demo
 python -m herald.cli list
 ```
 
+`init` creates the local data directories and seeds RSS feeds for hardware
+architecture, operating systems, machine learning, and reinforcement learning.
+`refresh` fetches every enabled feed and deduplicates cross-listed articles.
