@@ -71,10 +71,12 @@ class WebTests(unittest.TestCase):
             html = response.read().decode()
         self.assertEqual(response.status, 200)
         self.assertIn("Herald", html)
-        self.assertIn("/static/app.js", html)
+        self.assertIn("/static/app.js?v=10", html)
+        self.assertIn("/static/styles.css?v=10", html)
 
         with urlopen(self.base_url + "/static/styles.css") as response:
             self.assertIn("text/css", response.headers["Content-Type"])
+            self.assertEqual(response.headers["Cache-Control"], "no-store, max-age=0")
             self.assertIn("--green", response.read().decode())
 
         with urlopen(self.base_url + "/static/app.js") as response:
