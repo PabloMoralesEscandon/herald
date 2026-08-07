@@ -155,6 +155,30 @@ class WebTests(unittest.TestCase):
         self.assertIn("Exported to", page)
         self.assertTrue((self.settings.vault_path / entry["exported_path"]).is_file())
 
+    def test_arxiv_article_gets_summary_and_direct_pdf_link(self) -> None:
+        source_id = self.database.add_source(
+            "arXiv Hardware", "https://rss.arxiv.org/rss/cs.AR", "Chip Design"
+        )
+        entry_id, _ = self.database.upsert_entry(
+            source_id=source_id,
+            guid="arxiv-paper",
+            url="https://arxiv.org/abs/2608.01234",
+            title="A Test Hardware Paper",
+            content=(
+                "The paper presents a new circuit. It reduces latency. "
+                "The evaluation compares three baselines."
+            ),
+        )
+
+        with urlopen(self.base_url + f"/entry/{entry_id}") as response:
+            page = response.read().decode()
+
+        self.assertIn("https://arxiv.org/pdf/2608.01234", page)
+        self.assertIn("Open PDF", page)
+        self.assertIn("View abstract", page)
+        self.assertIn("The paper presents a new circuit.", page)
+        self.assertTrue(self.database.get_entry(entry_id)["summary"])
+
     def test_triage_action_uses_contract_verbs(self) -> None:
         entry_id = self.database.list_entries()[0]["id"]
         status, entry = self.request(

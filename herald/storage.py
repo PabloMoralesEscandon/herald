@@ -127,7 +127,10 @@ class Database:
                     UPDATE entries
                     SET url = ?, title = ?, author = ?, published_at = ?,
                         content = CASE WHEN ? <> '' THEN ? ELSE content END,
-                        summary = CASE WHEN ? <> '' THEN ? ELSE summary END
+                        summary = CASE
+                            WHEN summary = '' AND ? <> '' THEN ?
+                            ELSE summary
+                        END
                     WHERE id = ?
                     """,
                     (

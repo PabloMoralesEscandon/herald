@@ -183,6 +183,10 @@ kbd { padding: 2px 6px; border: 1px solid var(--line); border-radius: 4px; backg
 .page-excerpt { margin: 34px 0; }
 .page-excerpt h2 { color: #8c958f; font-size: 10px; letter-spacing: .13em; text-transform: uppercase; }
 .page-excerpt p { white-space: pre-wrap; color: #526159; font: 15px/1.75 Georgia, serif; }
+.source-link { color: var(--green); border: 1px solid var(--green); background: transparent; }
+.source-link:hover { color: #f7f5ee; }
+.pdf-link { background: #9a3f35; }
+.pdf-link:hover { background: #7f3029; }
 
 @keyframes shimmer { to { background-position-x: -220%; } }
 @keyframes spin { to { transform: rotate(360deg); } }

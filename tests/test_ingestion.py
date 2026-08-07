@@ -128,6 +128,7 @@ class IngestionServiceTests(unittest.TestCase):
         self.assertEqual((first.fetched, first.created, first.updated), (1, 1, 0))
         self.assertEqual((second.fetched, second.created, second.updated), (1, 0, 1))
         self.assertEqual(len(self.database.list_entries()), 1)
+        self.assertTrue(self.database.list_entries()[0]["summary"])
 
     def test_cross_listed_url_is_deduplicated_between_sources(self) -> None:
         source_one = self.database.add_source(

@@ -10,10 +10,11 @@ from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
 from .config import Settings
+from .links import arxiv_pdf_url
 from .obsidian import ObsidianExporter
 from .service import HeraldService
 from .storage import Database
-from .summaries import LocalSummarizer
+from .summaries import LocalSummarizer, deterministic_summary
 
 
 STATIC_DIR = Path(__file__).with_name("static")
@@ -134,6 +135,11 @@ class HeraldRequestHandler(BaseHTTPRequestHandler):
                 HTTPStatus.NOT_FOUND,
             )
             return
+        if not entry["summary"]:
+            self.server.database.set_summary(
+                entry_id, deterministic_summary(entry["title"], entry["content"])
+            )
+            entry = self.server.database.get_entry(entry_id)
         kept = entry["status"] == "kept"
         read_action = "unread" if entry["status"] == "read" else "read"
         read_label = "Mark unread" if read_action == "unread" else "Mark read"
@@ -149,6 +155,14 @@ class HeraldRequestHandler(BaseHTTPRequestHandler):
         problem = f'<p class="page-notice error">{escape(error)}</p>' if error else ""
         disabled = "" if kept else " disabled"
         disabled_hint = "" if kept else "<small>Keep this article before exporting.</small>"
+        pdf_url = arxiv_pdf_url(entry["url"])
+        pdf_link = (
+            f'<a class="open-link pdf-link" href="{escape(pdf_url, quote=True)}" '
+            'target="_blank" rel="noopener noreferrer">Open PDF ↗</a>'
+            if pdf_url
+            else ""
+        )
+        original_label = "View abstract" if pdf_url else "Read original"
         document = f"""<!doctype html>
 <html lang="en">
 <head>
@@ -177,7 +191,10 @@ class HeraldRequestHandler(BaseHTTPRequestHandler):
       <p>{escape(summary)}</p>
     </section>
     <section class="page-excerpt"><h2>From the feed</h2><p>{escape(entry['content'] or 'The feed did not provide an excerpt.')}</p></section>
-    <a class="open-link" href="{escape(entry['url'], quote=True)}" target="_blank" rel="noopener noreferrer">Read original ↗</a>
+    <div class="reader-final-actions">
+      {pdf_link}
+      <a class="open-link source-link" href="{escape(entry['url'], quote=True)}" target="_blank" rel="noopener noreferrer">{original_label} ↗</a>
+    </div>
   </main>
 </body>
 </html>"""

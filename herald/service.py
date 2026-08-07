@@ -12,7 +12,12 @@ from .feeds import FeedParseError, parse_feed
 from .obsidian import ObsidianExporter
 from .sources import CURATED_SOURCES
 from .storage import Database
-from .summaries import LocalSummarizer, SummaryProvider, SummaryResult
+from .summaries import (
+    LocalSummarizer,
+    SummaryProvider,
+    SummaryResult,
+    deterministic_summary,
+)
 
 
 Fetcher = Callable[[str], bytes]
@@ -108,6 +113,7 @@ class HeraldService:
                 author=entry.author,
                 published_at=entry.published_at,
                 content=entry.content,
+                summary=deterministic_summary(entry.title, entry.content),
             )
             created += int(was_created)
             updated += int(not was_created)
