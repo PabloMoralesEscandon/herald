@@ -15,3 +15,5 @@ herald = "herald.cli:main"
 [tool.setuptools.packages.find]
 include = ["herald*"]
 
+[tool.setuptools.package-data]
+herald = ["static/*.html", "static/*.css", "static/*.js"]
