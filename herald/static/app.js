@@ -32,11 +32,17 @@ document.addEventListener("DOMContentLoaded", () => {
 
   document.querySelector("#today").innerHTML = formatToday();
   elements.statusNav.addEventListener("click", changeStatusFilter);
+  elements.list.addEventListener("pointerover", previewEntryFromEvent);
+  elements.list.addEventListener("focusin", previewEntryFromEvent);
   elements.categoryNav.addEventListener("click", changeCategoryFromButton);
   elements.categorySelect.addEventListener("change", changeCategoryFromSelect);
   elements.search.addEventListener("input", (event) => {
     state.search = event.target.value.trim().toLowerCase();
     renderList();
+    const visible = filteredEntries();
+    if (visible.length && !visible.some((entry) => entry.id === state.selectedId)) {
+      selectEntry(visible[0].id);
+    }
   });
   elements.reload.addEventListener("click", refreshFeeds);
   document.querySelector("#clear-filters").addEventListener("click", clearFilters);
@@ -81,6 +87,8 @@ async function loadData() {
     renderList();
     if (state.selectedId && state.entries.some((entry) => entry.id === state.selectedId)) {
       renderReader();
+    } else if (state.entries.length) {
+      selectEntry(state.entries[0].id);
     } else if (state.selectedId) {
       state.selectedId = null;
       renderReader();
@@ -145,10 +153,15 @@ function renderCounts() {
 
 function selectEntry(id) {
   if (!state.entries.some((entry) => entry.id === id)) return;
+  if (state.selectedId === id) return;
   state.selectedId = id;
   renderList();
   renderReader();
-  elements.reader.classList.add("mobile-open");
+}
+
+function previewEntryFromEvent(event) {
+  const card = event.target.closest("[data-entry-id]");
+  if (card) selectEntry(Number(card.dataset.entryId));
 }
 
 function renderReader() {
@@ -175,6 +188,11 @@ function renderReader() {
   setText("#reader-excerpt", entry.content || "The feed did not provide an article excerpt.");
   const link = document.querySelector("#reader-link");
   link.href = entry.url;
+  const pdfUrl = arxivPdfUrl(entry.url);
+  const pdfLink = document.querySelector("#reader-pdf");
+  pdfLink.hidden = !pdfUrl;
+  pdfLink.href = pdfUrl || "#";
+  link.innerHTML = pdfUrl ? "View abstract <span>↗</span>" : "Read original <span>↗</span>";
   const status = document.querySelector("#reader-status");
   status.textContent = entry.status;
   status.className = `status-chip ${entry.status}`;
@@ -315,6 +333,15 @@ function handleKeyboard(event) {
 }
 
 function selectedEntry() { return state.entries.find((entry) => entry.id === state.selectedId); }
+function arxivPdfUrl(value) {
+  try {
+    const url = new URL(value);
+    if (!["arxiv.org", "www.arxiv.org", "export.arxiv.org"].includes(url.hostname)) return null;
+    let identifier = url.pathname.startsWith("/abs/") ? url.pathname.slice(5) : url.pathname.startsWith("/pdf/") ? url.pathname.slice(5) : "";
+    identifier = identifier.replace(/\.pdf$/, "").replace(/^\/+|\/+$/g, "");
+    return identifier ? `https://arxiv.org/pdf/${identifier}` : null;
+  } catch { return null; }
+}
 function summaryProvenance(entry) {
   if (entry.summary_provider === "ollama") return { label: `AI-generated locally${entry.summary_model ? ` · ${entry.summary_model}` : ""}`, kind: "ai" };
   if (entry.summary_provider === "extractive") return { label: "Non-AI · extracted from feed abstract", kind: "non-ai" };

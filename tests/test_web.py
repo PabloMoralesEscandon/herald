@@ -71,8 +71,9 @@ class WebTests(unittest.TestCase):
             html = response.read().decode()
         self.assertEqual(response.status, 200)
         self.assertIn("Herald", html)
-        self.assertIn("/static/app.js?v=13", html)
-        self.assertIn("/static/styles.css?v=13", html)
+        self.assertIn("/static/app.js?v=14", html)
+        self.assertIn("/static/styles.css?v=14", html)
+        self.assertIn('id="reader-pdf"', html)
 
         with urlopen(self.base_url + "/static/styles.css") as response:
             self.assertIn("text/css", response.headers["Content-Type"])
@@ -84,6 +85,8 @@ class WebTests(unittest.TestCase):
         self.assertIn('href="/entry/${entry.id}"', script)
         self.assertNotIn("openEntryFromDashboard", script)
         self.assertNotIn("#entry-${id}", script)
+        self.assertIn('elements.list.addEventListener("pointerover"', script)
+        self.assertIn("selectEntry(state.entries[0].id)", script)
         self.assertIn("Open →", script)
 
     def test_lists_and_filters_entries(self) -> None:
