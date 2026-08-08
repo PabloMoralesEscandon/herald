@@ -108,7 +108,7 @@ class FoundationTests(unittest.TestCase):
                 )
             }
             version = int(migrated.execute("PRAGMA user_version").fetchone()[0])
-        self.assertEqual(version, 2)
+        self.assertEqual(version, 3)
         self.assertTrue(
             {
                 "paper_identifiers",
@@ -119,6 +119,7 @@ class FoundationTests(unittest.TestCase):
                 "entry_feedback",
                 "embedding_cache",
                 "application_settings",
+                "provider_cache",
                 "obsidian_exports",
                 "obsidian_archives",
             }.issubset(tables)
