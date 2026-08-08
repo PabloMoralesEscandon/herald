@@ -76,6 +76,7 @@ class WebTests(unittest.TestCase):
         self.assertIn('id="reader-content" class="reader-content" hidden', html)
         self.assertNotIn('id="reader-placeholder"', html)
         self.assertIn('class="nav-item active" data-status="unread"', html)
+        self.assertLess(html.index('data-status="unread"'), html.index('data-status="all"'))
         self.assertIn('<h1 id="inbox-title">Unread</h1>', html)
         self.assertIn('id="clear-filters" class="text-button" type="button">Show unread', html)
 
