@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 
 from .feeds import FeedParseError, parse_feed
 from .obsidian import ObsidianExporter
+from .relevance import RelevanceCoordinator, RelevanceEngine
 from .sources import CURATED_SOURCES
 from .storage import Database
 from .summaries import (
@@ -74,11 +75,13 @@ class HeraldService:
         *,
         summarizer: SummaryProvider | None = None,
         exporter: ObsidianExporter | None = None,
+        relevance: RelevanceCoordinator | None = None,
     ):
         self.database = database
         self.fetcher = fetcher or fetch_feed
         self.summarizer = summarizer or LocalSummarizer()
         self.exporter = exporter or ObsidianExporter(database.path.parent / "vault")
+        self.relevance = relevance or RelevanceCoordinator(RelevanceEngine(database))
 
     def seed_curated_sources(self) -> int:
         existing = {source["url"] for source in self.database.list_sources()}
@@ -170,3 +173,25 @@ class HeraldService:
     def export_kept(self) -> list[Path]:
         kept = self.database.list_entries(status="kept", limit=500)
         return [self.export_entry(entry["id"]) for entry in kept]
+
+    def change_status(self, entry_id: int, status: str) -> dict[str, object]:
+        entry = self.database.get_entry(entry_id)
+        if entry is None:
+            raise KeyError(f"Entry {entry_id} does not exist")
+        if not self.database.set_status(entry_id, status):
+            raise KeyError(f"Entry {entry_id} does not exist")
+        profile = self.database.get_relevance_profile(str(entry["content_kind"]))
+        if profile is not None:
+            profile_id = int(profile["id"])
+            if status in {"kept", "discarded"}:
+                self.database.record_relevance_feedback(
+                    entry_id,
+                    profile_id,
+                    "keep" if status == "kept" else "discard",
+                )
+            else:
+                self.database.clear_relevance_feedback(entry_id, profile_id)
+            self.relevance.start(str(entry["content_kind"]))
+        updated = self.database.get_entry(entry_id)
+        assert updated is not None
+        return updated

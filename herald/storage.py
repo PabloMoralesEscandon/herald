@@ -15,6 +15,7 @@ VALID_CONTENT_KINDS = {"paper", "news"}
 VALID_ENRICHMENT_STATES = {"pending", "enriched", "failed", "not_applicable"}
 VALID_RELEVANCE_BUCKETS = {"pending", "relevant", "filtered"}
 VALID_FEEDBACK_LABELS = {"keep", "discard"}
+VALID_SELECTIVITY_LEVELS = {"broad", "balanced", "focused"}
 VALID_EXPORT_STATES = {
     "pending",
     "synced",
@@ -541,6 +542,7 @@ class Database:
     ) -> list[dict[str, Any]]:
         clauses: list[str] = []
         params: list[Any] = []
+        join_params: list[Any] = []
         if status:
             if status not in VALID_STATUSES:
                 raise ValueError(f"Unknown status: {status}")
@@ -554,35 +556,57 @@ class Database:
                 raise ValueError(f"Unknown content kind: {content_kind}")
             clauses.append("entries.content_kind = ?")
             params.append(content_kind)
+        ranking_join = ""
+        ranking_fields = ""
+        ranked_order = False
+        if profile_id is not None:
+            ranking_join = (
+                "JOIN entry_rankings AS selected_ranking "
+                "ON selected_ranking.entry_id = entries.id "
+                "AND selected_ranking.profile_id = ?"
+            )
+            join_params.append(profile_id)
+            ranking_fields = (
+                ", selected_ranking.score AS relevance_score"
+                ", selected_ranking.bucket AS relevance_bucket"
+                ", selected_ranking.components_json AS relevance_components_json"
+                ", selected_ranking.explanation_json AS relevance_explanation_json"
+                ", selected_ranking.model AS relevance_model"
+                ", selected_ranking.scored_at AS relevance_scored_at"
+            )
+            ranked_order = True
         if relevance_bucket:
             if relevance_bucket not in VALID_RELEVANCE_BUCKETS:
                 raise ValueError(f"Unknown relevance bucket: {relevance_bucket}")
-            ranking_clause = (
-                "entry_rankings.entry_id = entries.id "
-                "AND entry_rankings.bucket = ?"
-            )
-            params.append(relevance_bucket)
             if profile_id is not None:
-                ranking_clause += " AND entry_rankings.profile_id = ?"
-                params.append(profile_id)
-            clauses.append(
-                f"EXISTS (SELECT 1 FROM entry_rankings WHERE {ranking_clause})"
-            )
-        elif profile_id is not None:
-            clauses.append(
-                "EXISTS (SELECT 1 FROM entry_rankings "
-                "WHERE entry_rankings.entry_id = entries.id "
-                "AND entry_rankings.profile_id = ?)"
-            )
-            params.append(profile_id)
+                clauses.append("selected_ranking.bucket = ?")
+                params.append(relevance_bucket)
+            else:
+                clauses.append(
+                    "EXISTS (SELECT 1 FROM entry_rankings "
+                    "WHERE entry_rankings.entry_id = entries.id "
+                    "AND entry_rankings.bucket = ?)"
+                )
+                params.append(relevance_bucket)
         if cursor:
             sort_at, entry_id = decode_entry_cursor(cursor)
-            clauses.append(
-                "(COALESCE(entries.published_at, entries.discovered_at) < ? "
-                "OR (COALESCE(entries.published_at, entries.discovered_at) = ? "
-                "AND entries.id < ?))"
-            )
-            params.extend((sort_at, sort_at, entry_id))
+            if ranked_order:
+                try:
+                    sort_score = float(sort_at)
+                except ValueError as error:
+                    raise ValueError("Invalid ranked entry cursor") from error
+                clauses.append(
+                    "(selected_ranking.score < ? OR "
+                    "(selected_ranking.score = ? AND entries.id < ?))"
+                )
+                params.extend((sort_score, sort_score, entry_id))
+            else:
+                clauses.append(
+                    "(COALESCE(entries.published_at, entries.discovered_at) < ? "
+                    "OR (COALESCE(entries.published_at, entries.discovered_at) = ? "
+                    "AND entries.id < ?))"
+                )
+                params.extend((sort_at, sort_at, entry_id))
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         limit_clause = ""
         if limit is not None:
@@ -596,14 +620,26 @@ class Database:
                 SELECT entries.*, sources.title AS source_title,
                        sources.category AS source_category,
                        sources.adapter AS source_adapter
+                       {ranking_fields}
                 FROM entries JOIN sources ON sources.id = entries.source_id
+                {ranking_join}
                 {where}
-                ORDER BY COALESCE(published_at, discovered_at) DESC, entries.id DESC
+                ORDER BY {"selected_ranking.score" if ranked_order else "COALESCE(published_at, discovered_at)"} DESC,
+                         entries.id DESC
                 {limit_clause}
                 """,
-                params,
+                [*join_params, *params],
             ).fetchall()
-            return [dict(row) for row in rows]
+            results = [dict(row) for row in rows]
+            for result in results:
+                if "relevance_components_json" in result:
+                    result["relevance_components"] = json.loads(
+                        str(result.pop("relevance_components_json"))
+                    )
+                    result["relevance_explanation"] = json.loads(
+                        str(result.pop("relevance_explanation_json"))
+                    )
+            return results
 
     def list_entries_page(
         self,
@@ -620,8 +656,13 @@ class Database:
         next_cursor = None
         if has_more and entries:
             last = entries[-1]
+            sort_value = (
+                str(last["relevance_score"])
+                if "relevance_score" in last
+                else str(last["published_at"] or last["discovered_at"])
+            )
             next_cursor = encode_entry_cursor(
-                str(last["published_at"] or last["discovered_at"]), int(last["id"])
+                sort_value, int(last["id"])
             )
         return {"entries": entries, "next_cursor": next_cursor}
 
@@ -661,11 +702,38 @@ class Database:
                     )
                 }
             )
+            relevance = {
+                kind: {"pending": content_kinds[kind], "relevant": 0, "filtered": 0}
+                for kind in sorted(VALID_CONTENT_KINDS)
+            }
+            for row in connection.execute(
+                """
+                SELECT relevance_profiles.content_kind, entry_rankings.bucket,
+                       COUNT(*) AS count
+                FROM entry_rankings
+                JOIN relevance_profiles
+                  ON relevance_profiles.id = entry_rankings.profile_id
+                JOIN entries ON entries.id = entry_rankings.entry_id
+                WHERE entries.content_kind = relevance_profiles.content_kind
+                GROUP BY relevance_profiles.content_kind, entry_rankings.bucket
+                """
+            ):
+                kind = str(row["content_kind"])
+                bucket = str(row["bucket"])
+                relevance[kind][bucket] = int(row["count"])
+            for kind in relevance:
+                relevance[kind]["pending"] = max(
+                    0,
+                    content_kinds[kind]
+                    - relevance[kind]["relevant"]
+                    - relevance[kind]["filtered"],
+                )
         return {
             "total": total,
             "statuses": statuses,
             "categories": categories,
             "content_kinds": content_kinds,
+            "relevance": relevance,
         }
 
     def set_status(self, entry_id: int, status: str) -> bool:
@@ -1018,15 +1086,29 @@ class Database:
     ) -> dict[str, Any]:
         if content_kind not in VALID_CONTENT_KINDS:
             raise ValueError(f"Unknown content kind: {content_kind}")
+        if selectivity not in VALID_SELECTIVITY_LEVELS:
+            raise ValueError(f"Unknown selectivity: {selectivity}")
+        if threshold is not None and not 0.0 <= threshold <= 100.0:
+            raise ValueError("Threshold must be between 0 and 100")
         if not 0.0 <= target_precision <= 1.0:
             raise ValueError("Target precision must be between 0 and 1")
+        cleaned_lists = []
+        for values_list in (
+            interests,
+            exclusions or [],
+            include_phrases or [],
+            never_show_phrases or [],
+        ):
+            cleaned: list[str] = []
+            seen: set[str] = set()
+            for value in values_list:
+                normalized = str(value).strip()
+                if normalized and normalized.casefold() not in seen:
+                    cleaned.append(normalized)
+                    seen.add(normalized.casefold())
+            cleaned_lists.append(cleaned)
         now = utc_now()
-        values = (
-            json.dumps(interests),
-            json.dumps(exclusions or []),
-            json.dumps(include_phrases or []),
-            json.dumps(never_show_phrases or []),
-        )
+        values = tuple(json.dumps(value) for value in cleaned_lists)
         with self.connect() as connection:
             connection.execute(
                 """
@@ -1072,6 +1154,26 @@ class Database:
                 (content_kind,),
             ).fetchone()
             return self._decode_profile(row)
+
+    def list_relevance_profiles(self) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            return [
+                profile
+                for row in connection.execute(
+                    "SELECT * FROM relevance_profiles ORDER BY content_kind"
+                )
+                if (profile := self._decode_profile(row)) is not None
+            ]
+
+    def set_relevance_threshold(self, profile_id: int, threshold: float) -> bool:
+        if not 0.0 <= threshold <= 100.0:
+            raise ValueError("Threshold must be between 0 and 100")
+        with self.connect() as connection:
+            cursor = connection.execute(
+                "UPDATE relevance_profiles SET threshold = ?, updated_at = ? WHERE id = ?",
+                (threshold, utc_now(), profile_id),
+            )
+            return cursor.rowcount == 1
 
     def upsert_entry_ranking(
         self,
@@ -1142,6 +1244,27 @@ class Database:
             result["explanation"] = json.loads(str(result.pop("explanation_json")))
             return result
 
+    def list_entry_rankings(self, profile_id: int) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT entry_rankings.*, entries.status, entries.source_id,
+                       entries.title, entries.content
+                FROM entry_rankings
+                JOIN entries ON entries.id = entry_rankings.entry_id
+                WHERE profile_id = ?
+                ORDER BY score DESC, entry_id DESC
+                """,
+                (profile_id,),
+            ).fetchall()
+        results: list[dict[str, Any]] = []
+        for row in rows:
+            result = dict(row)
+            result["components"] = json.loads(str(result.pop("components_json")))
+            result["explanation"] = json.loads(str(result.pop("explanation_json")))
+            results.append(result)
+        return results
+
     def record_relevance_feedback(
         self, entry_id: int, profile_id: int, label: str
     ) -> None:
@@ -1160,6 +1283,14 @@ class Database:
                 """,
                 (entry_id, profile_id, label, now, now),
             )
+
+    def clear_relevance_feedback(self, entry_id: int, profile_id: int) -> bool:
+        with self.connect() as connection:
+            cursor = connection.execute(
+                "DELETE FROM entry_feedback WHERE entry_id = ? AND profile_id = ?",
+                (entry_id, profile_id),
+            )
+            return cursor.rowcount == 1
 
     def list_relevance_feedback(
         self, profile_id: int, *, limit: int | None = None

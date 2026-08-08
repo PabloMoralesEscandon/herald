@@ -14,6 +14,7 @@ class Settings:
     port: int
     ollama_url: str
     ollama_model: str
+    ollama_embedding_model: str = "embeddinggemma"
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -32,10 +33,12 @@ class Settings:
             port=int(os.environ.get("HERALD_PORT", "8765")),
             ollama_url=os.environ.get("HERALD_OLLAMA_URL", "http://127.0.0.1:11434"),
             ollama_model=os.environ.get("HERALD_OLLAMA_MODEL", "qwen2.5:3b"),
+            ollama_embedding_model=os.environ.get(
+                "HERALD_OLLAMA_EMBEDDING_MODEL", "embeddinggemma"
+            ),
         )
 
     def ensure_directories(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         self.vault_path.mkdir(parents=True, exist_ok=True)
-

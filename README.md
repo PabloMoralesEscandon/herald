@@ -64,6 +64,14 @@ is optional: when the default local Ollama service is absent, Herald
 automatically uses a deterministic extractive summary and makes no paid or
 hosted AI request.
 
+Relevance scoring follows the same rule. Herald prefers batched
+`embeddinggemma` embeddings from Ollama and caches them locally. If Ollama or
+the model is unavailable, it immediately uses its bundled deterministic TF-IDF
+scorer. Paper and News interests, exclusions, exact include rules, and
+never-show rules are independent. Below-threshold entries remain recoverable in
+the **Filtered** bucket; the filter never discards an entry or imposes a fixed
+daily quota.
+
 Configuration environment variables:
 
 - `HERALD_DATA_DIR` — database and default vault root (default `.herald`)
@@ -73,6 +81,8 @@ Configuration environment variables:
 - `HERALD_PORT` — dashboard port (default `8765`)
 - `HERALD_OLLAMA_URL` — Ollama address (default `http://127.0.0.1:11434`)
 - `HERALD_OLLAMA_MODEL` — local model name (default `qwen2.5:3b`)
+- `HERALD_OLLAMA_EMBEDDING_MODEL` — local relevance model (default
+  `embeddinggemma`)
 
 ## Tests
 

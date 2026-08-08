@@ -10,6 +10,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from .config import Settings
 from .obsidian import ObsidianExporter
+from .relevance import OllamaEmbeddingProvider, RelevanceCoordinator, RelevanceEngine
 from .service import HeraldService
 from .storage import Database
 from .summaries import LocalSummarizer
@@ -63,6 +64,17 @@ class HeraldRequestHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/stats":
             self._send_json(self.server.database.entry_counts())
             return
+        if parsed.path == "/api/relevance/health":
+            self._send_json(self.server.service.relevance.health())
+            return
+        profile_kind = self._profile_route(parsed.path)
+        if profile_kind is not None:
+            profile = self.server.database.get_relevance_profile(profile_kind)
+            if profile is None:
+                self._send_error(HTTPStatus.NOT_FOUND, "Profile not found")
+            else:
+                self._send_json(profile)
+            return
         page_entry_id = self._page_entry_id(parsed.path)
         if page_entry_id is not None:
             self._redirect_to_inbox()
@@ -73,6 +85,25 @@ class HeraldRequestHandler(BaseHTTPRequestHandler):
             return
         self._send_error(HTTPStatus.NOT_FOUND, "Not found")
 
+    def do_PUT(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+        path = urlparse(self.path).path
+        profile_kind = self._profile_route(path)
+        if profile_kind is None:
+            self._send_error(HTTPStatus.NOT_FOUND, "Not found")
+            return
+        payload = self._read_json()
+        if payload is None:
+            return
+        try:
+            profile = self.server.service.relevance.engine.update_profile(
+                profile_kind, payload
+            )
+        except (TypeError, ValueError) as error:
+            self._send_error(HTTPStatus.BAD_REQUEST, str(error))
+            return
+        job = self.server.service.relevance.start(profile_kind)
+        self._send_json({"profile": profile, "rescore": job})
+
     def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
         path = urlparse(self.path).path
         if path == "/api/sources":
@@ -80,6 +111,13 @@ class HeraldRequestHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/refresh":
             self._refresh()
+            return
+        rescore_kind = self._profile_rescore_route(path)
+        if rescore_kind is not None:
+            self._send_json(
+                self.server.service.relevance.start(rescore_kind),
+                HTTPStatus.ACCEPTED,
+            )
             return
         entry_action = self._entry_subroute(path, "action")
         if entry_action is not None:
@@ -120,23 +158,42 @@ class HeraldRequestHandler(BaseHTTPRequestHandler):
     def _list_entries(self, query: dict[str, list[str]]) -> None:
         status = query.get("status", [None])[0] or None
         category = query.get("category", [None])[0] or None
+        content_kind = query.get("kind", [None])[0] or None
+        relevance_bucket = query.get("bucket", [None])[0] or None
+        cursor = query.get("cursor", [None])[0] or None
         try:
             limit = int(query.get("limit", ["100"])[0])
-            entries = self.server.database.list_entries(
+            profile = (
+                self.server.database.get_relevance_profile(content_kind)
+                if content_kind and relevance_bucket else None
+            )
+            page = self.server.database.list_entries_page(
                 status=status,
                 category=category,
+                content_kind=content_kind,
+                relevance_bucket=relevance_bucket,
+                profile_id=int(profile["id"]) if profile else None,
+                cursor=cursor,
                 limit=limit,
             )
         except (TypeError, ValueError) as error:
             self._send_error(HTTPStatus.BAD_REQUEST, str(error))
             return
-        self._send_json(entries)
+        if cursor is not None or content_kind is not None or relevance_bucket is not None:
+            self._send_json(page)
+        else:
+            self._send_json(page["entries"])
 
     def _get_entry(self, entry_id: int) -> None:
         entry = self.server.database.get_entry(entry_id)
         if entry is None:
             self._send_error(HTTPStatus.NOT_FOUND, "Entry not found")
             return
+        profile = self.server.database.get_relevance_profile(str(entry["content_kind"]))
+        if profile is not None:
+            entry["relevance"] = self.server.database.get_entry_ranking(
+                entry_id, int(profile["id"])
+            )
         self._send_json(entry)
 
     def _add_source(self) -> None:
@@ -176,13 +233,18 @@ class HeraldRequestHandler(BaseHTTPRequestHandler):
                 "action must be read, unread, keep, or discard",
             )
             return
-        if not self.server.database.set_status(entry_id, status):
+        try:
+            entry = self.server.service.change_status(entry_id, status)
+        except KeyError:
             self._send_error(HTTPStatus.NOT_FOUND, "Entry not found")
             return
-        self._send_json(self.server.database.get_entry(entry_id))
+        self._send_json(entry)
 
     def _refresh(self) -> None:
         results = self.server.service.refresh_all()
+        if any(result.created for result in results):
+            for kind in ("paper", "news"):
+                self.server.service.relevance.start(kind)
         payload = [result.to_dict() for result in results]
         self._send_json(
             {
@@ -290,6 +352,24 @@ class HeraldRequestHandler(BaseHTTPRequestHandler):
         except ValueError:
             return None
 
+    @staticmethod
+    def _profile_route(path: str) -> str | None:
+        parts = path.strip("/").split("/")
+        if len(parts) == 3 and parts[:2] == ["api", "profiles"]:
+            return parts[2] if parts[2] in {"paper", "news"} else None
+        return None
+
+    @staticmethod
+    def _profile_rescore_route(path: str) -> str | None:
+        parts = path.strip("/").split("/")
+        if (
+            len(parts) == 4
+            and parts[:2] == ["api", "profiles"]
+            and parts[3] == "rescore"
+        ):
+            return parts[2] if parts[2] in {"paper", "news"} else None
+        return None
+
     def _send_json(
         self,
         payload: Any,
@@ -320,11 +400,25 @@ def make_server(
     port: int | None = None,
     service: HeraldService | None = None,
 ) -> HeraldServer:
-    active_service = service or HeraldService(
-        database,
-        summarizer=LocalSummarizer(settings.ollama_url, settings.ollama_model),
-        exporter=ObsidianExporter(settings.vault_path),
-    )
+    if service is None:
+        relevance = RelevanceCoordinator(
+            RelevanceEngine(
+                database,
+                OllamaEmbeddingProvider(
+                    database,
+                    settings.ollama_url,
+                    settings.ollama_embedding_model,
+                ),
+            )
+        )
+        active_service = HeraldService(
+            database,
+            summarizer=LocalSummarizer(settings.ollama_url, settings.ollama_model),
+            exporter=ObsidianExporter(settings.vault_path),
+            relevance=relevance,
+        )
+    else:
+        active_service = service
     return HeraldServer(
         (host if host is not None else settings.host, port if port is not None else settings.port),
         database,
