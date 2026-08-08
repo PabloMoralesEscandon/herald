@@ -10,6 +10,7 @@ from urllib.request import Request, urlopen
 
 from herald.config import Settings
 from herald.demo import load_demo
+from herald.papers import PaperImporter
 from herald.storage import Database
 from herald.web import make_server
 
@@ -185,6 +186,47 @@ class WebTests(unittest.TestCase):
         self.assertEqual(source["category"], "Chip Design")
         _, sources = self.request("/api/sources")
         self.assertEqual(len(sources), 2)
+
+    def test_imports_a_paper_and_reports_idempotent_repeats(self) -> None:
+        metadata = {
+            "paperId": "0123456789abcdef0123456789abcdef01234567",
+            "externalIds": {"DOI": "10.1145/web.1"},
+            "url": "https://www.semanticscholar.org/paper/web",
+            "title": "Imported through the Herald API",
+            "abstract": "An abstract about chip design.",
+            "authors": [{"name": "API Author"}],
+            "publicationDate": "2026-08-08",
+            "fieldsOfStudy": ["Computer Science"],
+        }
+
+        def fetcher(url: str, headers: object, max_bytes: int, timeout: float) -> bytes:
+            return json.dumps(metadata).encode()
+
+        self.server.service.paper_importer = PaperImporter(
+            self.database, fetcher=fetcher, sleep=lambda _: None, request_delay=0
+        )
+        first_status, first = self.request(
+            "/api/import/paper", method="POST", payload={"input": "10.1145/web.1"}
+        )
+        second_status, second = self.request(
+            "/api/import/paper",
+            method="POST",
+            payload={"input": "https://doi.org/10.1145/WEB.1"},
+        )
+
+        self.assertEqual(first_status, 201)
+        self.assertTrue(first["created"])
+        self.assertEqual(first["entry"]["status"], "unread")
+        self.assertEqual(second_status, 200)
+        self.assertFalse(second["created"])
+        self.assertEqual(second["entry"]["id"], first["entry"]["id"])
+
+    def test_paper_import_validates_input_without_network_access(self) -> None:
+        status, payload = self.request(
+            "/api/import/paper", method="POST", payload={"input": "https://127.0.0.1/private"}
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("private or local", payload["error"])
 
     def test_summary_route_uses_offline_fallback(self) -> None:
         entry_id = self.database.list_entries()[0]["id"]

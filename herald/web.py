@@ -10,6 +10,12 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from .config import Settings
 from .obsidian import ObsidianExporter
+from .papers import (
+    PaperFetchError,
+    PaperImportError,
+    PaperNotFoundError,
+    UnsafePaperUrlError,
+)
 from .service import HeraldService
 from .storage import Database
 from .summaries import LocalSummarizer
@@ -80,6 +86,9 @@ class HeraldRequestHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/refresh":
             self._refresh()
+            return
+        if path == "/api/import/paper":
+            self._import_paper()
             return
         entry_action = self._entry_subroute(path, "action")
         if entry_action is not None:
@@ -191,6 +200,33 @@ class HeraldRequestHandler(BaseHTTPRequestHandler):
                 "updated": sum(result.updated for result in results),
                 "errors": sum(result.error is not None for result in results),
             }
+        )
+
+    def _import_paper(self) -> None:
+        payload = self._read_json()
+        if payload is None:
+            return
+        value = self._required_text(payload, "input")
+        if not value:
+            self._send_error(HTTPStatus.BAD_REQUEST, "input is required")
+            return
+        try:
+            result = self.server.service.import_paper(value)
+        except (ValueError, UnsafePaperUrlError) as error:
+            self._send_error(HTTPStatus.BAD_REQUEST, str(error))
+            return
+        except PaperNotFoundError as error:
+            self._send_error(HTTPStatus.NOT_FOUND, str(error))
+            return
+        except PaperFetchError as error:
+            self._send_error(HTTPStatus.BAD_GATEWAY, str(error))
+            return
+        except PaperImportError as error:
+            self._send_error(HTTPStatus.UNPROCESSABLE_ENTITY, str(error))
+            return
+        self._send_json(
+            result.to_dict(),
+            HTTPStatus.CREATED if result.created else HTTPStatus.OK,
         )
 
     def _summarize(self, entry_id: int) -> None:

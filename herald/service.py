@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 
 from .feeds import FeedParseError, parse_feed
 from .obsidian import ObsidianExporter
+from .papers import PaperImporter, PaperImportResult
 from .sources import CURATED_SOURCES
 from .storage import Database
 from .summaries import (
@@ -74,11 +75,13 @@ class HeraldService:
         *,
         summarizer: SummaryProvider | None = None,
         exporter: ObsidianExporter | None = None,
+        paper_importer: PaperImporter | None = None,
     ):
         self.database = database
         self.fetcher = fetcher or fetch_feed
         self.summarizer = summarizer or LocalSummarizer()
         self.exporter = exporter or ObsidianExporter(database.path.parent / "vault")
+        self.paper_importer = paper_importer or PaperImporter(database)
 
     def seed_curated_sources(self) -> int:
         existing = {source["url"] for source in self.database.list_sources()}
@@ -129,6 +132,8 @@ class HeraldService:
     def refresh_all(self) -> list[RefreshResult]:
         results: list[RefreshResult] = []
         for source in self.database.list_sources(enabled_only=True):
+            if source.get("adapter") == "manual":
+                continue
             try:
                 results.append(self.refresh_source(source))
             except (FeedFetchError, FeedParseError, ValueError) as error:
@@ -170,3 +175,6 @@ class HeraldService:
     def export_kept(self) -> list[Path]:
         kept = self.database.list_entries(status="kept", limit=500)
         return [self.export_entry(entry["id"]) for entry in kept]
+
+    def import_paper(self, value: str) -> PaperImportResult:
+        return self.paper_importer.import_paper(value)

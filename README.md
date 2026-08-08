@@ -43,6 +43,12 @@ To add another RSS or Atom feed, use `POST /api/sources` as documented in
 [`docs/API.md`](docs/API.md). To inspect or automate Herald from the command
 line, run `python -m herald.cli --help`.
 
+Papers that are not in a feed can be imported through `POST /api/import/paper`
+using a DOI, arXiv ID or URL, Semantic Scholar URL, or public paper page. Herald
+enriches the paper with free Semantic Scholar/Crossref metadata, extracts local
+keywords, and stores it as unread. Provider responses are cached in the local
+database; no API key or paid service is required.
+
 ## Data and Obsidian
 
 By default Herald writes everything below `.herald/` in the current directory:

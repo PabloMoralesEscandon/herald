@@ -191,6 +191,14 @@ CREATE TABLE IF NOT EXISTS application_settings (
     updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS provider_cache (
+    provider TEXT NOT NULL,
+    cache_key TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    fetched_at TEXT NOT NULL,
+    PRIMARY KEY (provider, cache_key)
+);
+
 CREATE TABLE IF NOT EXISTS obsidian_exports (
     entry_id INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE,
     vault_path TEXT NOT NULL DEFAULT '',
@@ -343,7 +351,7 @@ class Database:
                 ON CONFLICT(entry_id) DO NOTHING
                 """
             )
-            connection.execute("PRAGMA user_version = 2")
+            connection.execute("PRAGMA user_version = 3")
 
     def add_source(
         self,
@@ -527,6 +535,78 @@ class Database:
                 (entry_id,),
             ).fetchone()
             return dict(row) if row else None
+
+    def find_entry_by_canonical_key(self, canonical_key: str) -> dict[str, Any] | None:
+        normalized = canonical_key.strip().lower()
+        if not normalized:
+            return None
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT entries.*, sources.title AS source_title,
+                       sources.category AS source_category,
+                       sources.adapter AS source_adapter
+                FROM entries JOIN sources ON sources.id = entries.source_id
+                WHERE LOWER(entries.canonical_key) = ?
+                ORDER BY entries.id LIMIT 1
+                """,
+                (normalized,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def find_entry_by_url(self, url: str) -> dict[str, Any] | None:
+        normalized = url.strip()
+        if not normalized:
+            return None
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT entries.*, sources.title AS source_title,
+                       sources.category AS source_category,
+                       sources.adapter AS source_adapter
+                FROM entries JOIN sources ON sources.id = entries.source_id
+                WHERE entries.url = ? OR entries.canonical_url = ?
+                ORDER BY entries.id LIMIT 1
+                """,
+                (normalized, normalized),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def update_entry_metadata(
+        self,
+        entry_id: int,
+        *,
+        title: str,
+        author: str = "",
+        published_at: str | None = None,
+        content: str = "",
+        url: str | None = None,
+        canonical_url: str | None = None,
+        canonical_key: str | None = None,
+    ) -> bool:
+        """Augment an entry without replacing populated fields with blanks."""
+        now = utc_now()
+        with self.connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE entries
+                SET title = CASE WHEN ? <> '' THEN ? ELSE title END,
+                    author = CASE WHEN ? <> '' THEN ? ELSE author END,
+                    published_at = COALESCE(?, published_at),
+                    content = CASE WHEN ? <> '' THEN ? ELSE content END,
+                    url = COALESCE(?, url),
+                    canonical_url = COALESCE(?, canonical_url),
+                    canonical_key = COALESCE(?, canonical_key),
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    title.strip(), title.strip(), author.strip(), author.strip(),
+                    published_at, content.strip(), content.strip(), url,
+                    canonical_url, canonical_key, now, entry_id,
+                ),
+            )
+            return cursor.rowcount == 1
 
     def list_entries(
         self,
@@ -1237,6 +1317,49 @@ class Database:
                 "SELECT value FROM application_settings WHERE key = ?", (key,)
             ).fetchone()
             return default if row is None else json.loads(str(row["value"]))
+
+    def put_provider_cache(
+        self, provider: str, cache_key: str, payload: dict[str, Any]
+    ) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO provider_cache(provider, cache_key, payload_json, fetched_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(provider, cache_key) DO UPDATE SET
+                    payload_json = excluded.payload_json,
+                    fetched_at = excluded.fetched_at
+                """,
+                (
+                    provider.strip(), cache_key.strip(),
+                    json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+                    utc_now(),
+                ),
+            )
+
+    def get_provider_cache(
+        self, provider: str, cache_key: str, *, max_age_seconds: int = 86_400
+    ) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT payload_json, fetched_at FROM provider_cache
+                WHERE provider = ? AND cache_key = ?
+                """,
+                (provider.strip(), cache_key.strip()),
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            fetched_at = datetime.fromisoformat(str(row["fetched_at"]))
+            if fetched_at.tzinfo is None:
+                fetched_at = fetched_at.replace(tzinfo=UTC)
+            if (datetime.now(UTC) - fetched_at).total_seconds() > max_age_seconds:
+                return None
+            payload = json.loads(str(row["payload_json"]))
+        except (ValueError, TypeError, json.JSONDecodeError):
+            return None
+        return payload if isinstance(payload, dict) else None
 
     def upsert_obsidian_export(
         self,
