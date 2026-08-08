@@ -25,24 +25,21 @@ document.addEventListener("DOMContentLoaded", () => {
     search: document.querySelector("#search-input"),
     reload: document.querySelector("#reload-button"),
     reader: document.querySelector("#reader-pane"),
-    placeholder: document.querySelector("#reader-placeholder"),
     readerContent: document.querySelector("#reader-content"),
     toast: document.querySelector("#toast"),
   });
 
   document.querySelector("#today").innerHTML = formatToday();
   elements.statusNav.addEventListener("click", changeStatusFilter);
-  elements.list.addEventListener("pointerover", previewEntryFromEvent);
-  elements.list.addEventListener("focusin", previewEntryFromEvent);
+  elements.list.addEventListener("click", previewEntryFromEvent);
+  elements.list.addEventListener("dblclick", openPaperFromEvent);
   elements.categoryNav.addEventListener("click", changeCategoryFromButton);
   elements.categorySelect.addEventListener("change", changeCategoryFromSelect);
   elements.search.addEventListener("input", (event) => {
     state.search = event.target.value.trim().toLowerCase();
     renderList();
     const visible = filteredEntries();
-    if (visible.length && !visible.some((entry) => entry.id === state.selectedId)) {
-      selectEntry(visible[0].id);
-    }
+    if (!visible.some((entry) => entry.id === state.selectedId)) clearSelection();
   });
   elements.reload.addEventListener("click", refreshFeeds);
   document.querySelector("#clear-filters").addEventListener("click", clearFilters);
@@ -85,14 +82,10 @@ async function loadData() {
     renderCategories();
     renderCounts();
     renderList();
-    if (state.selectedId && state.entries.some((entry) => entry.id === state.selectedId)) {
-      renderReader();
-    } else if (state.entries.length) {
-      selectEntry(state.entries[0].id);
-    } else if (state.selectedId) {
+    if (!state.selectedId || !state.entries.some((entry) => entry.id === state.selectedId)) {
       state.selectedId = null;
-      renderReader();
     }
+    renderReader();
   } catch (error) {
     showToast(error.message, true);
     elements.list.innerHTML = `<div class="empty-state"><h2>Could not load the inbox</h2><p>${escapeHtml(error.message)}</p></div>`;
@@ -121,13 +114,14 @@ function renderList() {
   elements.list.hidden = entries.length === 0;
   elements.empty.hidden = entries.length !== 0;
   elements.list.innerHTML = entries.map((entry) => `
-    <a class="entry-card ${entry.status === "unread" ? "unread" : ""} ${entry.id === state.selectedId ? "selected" : ""}"
-      id="entry-${entry.id}" href="/entry/${entry.id}" data-entry-id="${entry.id}" aria-current="${entry.id === state.selectedId ? "true" : "false"}">
+    <button class="entry-card ${entry.status === "unread" ? "unread" : ""} ${entry.id === state.selectedId ? "selected" : ""}"
+      id="entry-${entry.id}" type="button" data-entry-id="${entry.id}" aria-pressed="${entry.id === state.selectedId ? "true" : "false"}"
+      title="Single-click to preview; double-click to open ${arxivPdfUrl(entry.url) ? "the PDF" : "the original"}">
       <span class="card-top"><span class="card-category">${escapeHtml(entry.source_category)}</span><time>${escapeHtml(relativeDate(entry.published_at))}</time></span>
       <h2>${escapeHtml(entry.title)}</h2>
       <span class="card-summary">${escapeHtml(entry.summary || entry.content || "No summary yet.")}</span>
-      <span class="card-foot"><span>${escapeHtml(entry.source_title)}</span>${entry.status !== "unread" ? `<span class="status-mini ${entry.status}">${escapeHtml(entry.status)}</span>` : ""}<span class="open-cue">Open →</span></span>
-    </a>`).join("");
+      <span class="card-foot"><span>${escapeHtml(entry.source_title)}</span>${entry.status !== "unread" ? `<span class="status-mini ${entry.status}">${escapeHtml(entry.status)}</span>` : ""}<span class="open-cue">Preview · double-click ${arxivPdfUrl(entry.url) ? "PDF" : "original"} ↗</span></span>
+    </button>`).join("");
 }
 
 function renderCategories() {
@@ -153,25 +147,47 @@ function renderCounts() {
 
 function selectEntry(id) {
   if (!state.entries.some((entry) => entry.id === id)) return;
-  if (state.selectedId === id) return;
   state.selectedId = id;
-  renderList();
+  syncSelectedCard();
   renderReader();
 }
 
 function previewEntryFromEvent(event) {
   const card = event.target.closest("[data-entry-id]");
-  if (card) selectEntry(Number(card.dataset.entryId));
+  if (!card) return;
+  selectEntry(Number(card.dataset.entryId));
+  elements.reader.classList.add("mobile-open");
+}
+
+function openPaperFromEvent(event) {
+  const card = event.target.closest("[data-entry-id]");
+  if (!card) return;
+  const entry = state.entries.find((item) => item.id === Number(card.dataset.entryId));
+  if (!entry) return;
+  window.open(arxivPdfUrl(entry.url) || entry.url, "_blank", "noopener,noreferrer");
+}
+
+function clearSelection() {
+  state.selectedId = null;
+  syncSelectedCard();
+  renderReader();
+}
+
+function syncSelectedCard() {
+  elements.list.querySelectorAll("[data-entry-id]").forEach((card) => {
+    const selected = Number(card.dataset.entryId) === state.selectedId;
+    card.classList.toggle("selected", selected);
+    card.setAttribute("aria-pressed", String(selected));
+  });
 }
 
 function renderReader() {
   const entry = selectedEntry();
   if (!entry) {
-    elements.placeholder.hidden = false;
     elements.readerContent.hidden = true;
+    elements.reader.classList.remove("mobile-open");
     return;
   }
-  elements.placeholder.hidden = true;
   elements.readerContent.hidden = false;
   setText("#reader-category", entry.source_category);
   setText("#reader-source", entry.source_title);
@@ -180,6 +196,8 @@ function renderReader() {
   const date = document.querySelector("#reader-date");
   date.textContent = longDate(entry.published_at);
   date.dateTime = entry.published_at || "";
+  setText("#reader-fact-date", longDate(entry.published_at));
+  setText("#reader-fact-source", entry.source_title);
   setText("#reader-summary", entry.summary || "A summary has not been generated for this entry yet.");
   const provenance = summaryProvenance(entry);
   const provenanceElement = document.querySelector("#reader-summary-provider");
@@ -189,6 +207,7 @@ function renderReader() {
   const link = document.querySelector("#reader-link");
   link.href = entry.url;
   const pdfUrl = arxivPdfUrl(entry.url);
+  setText("#reader-fact-destination", pdfUrl ? "Direct arXiv PDF" : "Original article");
   const pdfLink = document.querySelector("#reader-pdf");
   pdfLink.hidden = !pdfUrl;
   pdfLink.href = pdfUrl || "#";
@@ -319,17 +338,7 @@ function handleKeyboard(event) {
   if (event.key === "/" && document.activeElement !== elements.search) {
     event.preventDefault();
     elements.search.focus();
-    return;
   }
-  if (["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement?.tagName)) return;
-  if (!["j", "k"].includes(event.key.toLowerCase())) return;
-  const entries = filteredEntries();
-  if (!entries.length) return;
-  const current = entries.findIndex((entry) => entry.id === state.selectedId);
-  const delta = event.key.toLowerCase() === "j" ? 1 : -1;
-  const next = current < 0 ? 0 : Math.max(0, Math.min(entries.length - 1, current + delta));
-  selectEntry(entries[next].id);
-  document.querySelector(`[data-entry-id="${entries[next].id}"]`)?.scrollIntoView({ block: "nearest" });
 }
 
 function selectedEntry() { return state.entries.find((entry) => entry.id === state.selectedId); }

@@ -6,7 +6,6 @@ import threading
 import unittest
 from pathlib import Path
 from urllib.error import HTTPError
-from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from herald.config import Settings
@@ -71,25 +70,30 @@ class WebTests(unittest.TestCase):
             html = response.read().decode()
         self.assertEqual(response.status, 200)
         self.assertIn("Herald", html)
-        self.assertIn("/static/app.js?v=14", html)
-        self.assertIn("/static/styles.css?v=15", html)
+        self.assertIn("/static/app.js?v=16", html)
+        self.assertIn("/static/styles.css?v=16", html)
         self.assertIn('id="reader-pdf"', html)
+        self.assertIn('id="reader-content" class="reader-content" hidden', html)
+        self.assertNotIn('id="reader-placeholder"', html)
 
         with urlopen(self.base_url + "/static/styles.css") as response:
             styles = response.read().decode()
             self.assertIn("text/css", response.headers["Content-Type"])
             self.assertIn("[hidden] { display: none !important; }", styles)
+            self.assertIn("height: 100dvh", styles)
+            self.assertIn("overscroll-behavior: contain", styles)
             self.assertEqual(response.headers["Cache-Control"], "no-store, max-age=0")
             self.assertIn("--green", styles)
 
         with urlopen(self.base_url + "/static/app.js") as response:
             script = response.read().decode()
-        self.assertIn('href="/entry/${entry.id}"', script)
-        self.assertNotIn("openEntryFromDashboard", script)
-        self.assertNotIn("#entry-${id}", script)
-        self.assertIn('elements.list.addEventListener("pointerover"', script)
-        self.assertIn("selectEntry(state.entries[0].id)", script)
-        self.assertIn("Open →", script)
+        self.assertIn('elements.list.addEventListener("click"', script)
+        self.assertIn('elements.list.addEventListener("dblclick"', script)
+        self.assertIn('window.open(arxivPdfUrl(entry.url) || entry.url', script)
+        self.assertNotIn('href="/entry/${entry.id}"', script)
+        self.assertNotIn('addEventListener("pointerover"', script)
+        self.assertNotIn("selectEntry(state.entries[0].id)", script)
+        self.assertIn("Preview · double-click", script)
 
     def test_lists_and_filters_entries(self) -> None:
         status, entries = self.request("/api/entries?status=unread&category=Demo")
@@ -125,67 +129,20 @@ class WebTests(unittest.TestCase):
         self.assertEqual(entry["id"], entry_id)
         self.assertIn("source_title", entry)
 
-    def test_article_page_and_forms_work_without_javascript(self) -> None:
+    def test_internal_article_route_redirects_to_inbox(self) -> None:
         entry_id = self.database.list_entries()[0]["id"]
         with urlopen(self.base_url + f"/entry/{entry_id}") as response:
             page = response.read().decode()
-        self.assertIn("A Low-Latency Interconnect", page)
-        self.assertIn(f'action="/entry/{entry_id}/summarize"', page)
-        self.assertIn(f'action="/entry/{entry_id}/export"', page)
+        self.assertEqual(response.url, self.base_url + "/")
+        self.assertIn("Herald", page)
+        self.assertNotIn("article-page", page)
 
-        request = Request(
-            self.base_url + f"/entry/{entry_id}/action",
-            data=urlencode({"action": "keep"}).encode(),
-            method="POST",
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        status, payload = self.request(
+            f"/entry/{entry_id}/action", method="POST", payload={"action": "keep"}
         )
-        with urlopen(request) as response:
-            self.assertEqual(response.url, self.base_url + f"/entry/{entry_id}")
-        self.assertEqual(self.database.get_entry(entry_id)["status"], "kept")
-
-        for action in ("summarize", "export"):
-            request = Request(
-                self.base_url + f"/entry/{entry_id}/{action}",
-                data=b"",
-                method="POST",
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
-            )
-            with urlopen(request) as response:
-                page = response.read().decode()
-            self.assertEqual(response.url, self.base_url + f"/entry/{entry_id}")
-
-        entry = self.database.get_entry(entry_id)
-        self.assertTrue(entry["summary"])
-        self.assertTrue(entry["exported_path"])
-        self.assertIn("Exported to", page)
-        self.assertTrue((self.settings.vault_path / entry["exported_path"]).is_file())
-
-    def test_arxiv_article_gets_summary_and_direct_pdf_link(self) -> None:
-        source_id = self.database.add_source(
-            "arXiv Hardware", "https://rss.arxiv.org/rss/cs.AR", "Chip Design"
-        )
-        entry_id, _ = self.database.upsert_entry(
-            source_id=source_id,
-            guid="arxiv-paper",
-            url="https://arxiv.org/abs/2608.01234",
-            title="A Test Hardware Paper",
-            content=(
-                "The paper presents a new circuit. It reduces latency. "
-                "The evaluation compares three baselines."
-            ),
-        )
-
-        with urlopen(self.base_url + f"/entry/{entry_id}") as response:
-            page = response.read().decode()
-
-        self.assertIn("https://arxiv.org/pdf/2608.01234", page)
-        self.assertIn("Open PDF", page)
-        self.assertIn("View abstract", page)
-        self.assertIn("Non-AI · extracted from feed abstract", page)
-        self.assertIn("The paper presents a new circuit.", page)
-        entry = self.database.get_entry(entry_id)
-        self.assertTrue(entry["summary"])
-        self.assertEqual(entry["summary_provider"], "extractive")
+        self.assertEqual(status, 404)
+        self.assertIn("error", payload)
+        self.assertEqual(self.database.get_entry(entry_id)["status"], "unread")
 
     def test_triage_action_uses_contract_verbs(self) -> None:
         entry_id = self.database.list_entries()[0]["id"]
