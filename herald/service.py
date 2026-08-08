@@ -203,6 +203,9 @@ class HeraldService:
         if entry is None:
             raise KeyError(f"Entry {entry_id} does not exist")
         entry["keywords"] = self.database.list_entry_keywords(entry_id)
+        if entry["content_kind"] == "paper":
+            entry["identifiers"] = self.database.list_paper_identifiers(entry_id)
+            entry["references"] = self.database.list_paper_references(entry_id)
         export = self.database.get_obsidian_export(entry_id)
         if export is not None and export["relative_path"]:
             entry["obsidian_relative_path"] = export["relative_path"]
@@ -262,6 +265,9 @@ class HeraldService:
         }
 
     def export_entry(self, entry_id: int) -> Path:
+        return self._export_entry(entry_id, resync_citing=True)
+
+    def _export_entry(self, entry_id: int, *, resync_citing: bool) -> Path:
         entry = self._entry_for_export(entry_id)
         exporter = self.exporter
         try:
@@ -308,6 +314,8 @@ class HeraldService:
                 vault_path=str(exporter.vault_path),
                 error=str(error),
             )
+            if resync_citing:
+                self._resync_citing_notes(entry_id)
             raise
         except (OSError, ValueError) as error:
             self.database.upsert_obsidian_export(
@@ -316,6 +324,8 @@ class HeraldService:
                 vault_path=str(exporter.vault_path),
                 error=str(error),
             )
+            if resync_citing:
+                self._resync_citing_notes(entry_id)
             raise
         relative_path = exporter.relative_path(result.path)
         self.database.upsert_obsidian_export(
@@ -325,7 +335,26 @@ class HeraldService:
             relative_path=relative_path,
             content_hash=result.content_hash,
         )
+        if resync_citing:
+            self._resync_citing_notes(entry_id)
         return result.path
+
+    def _resync_citing_notes(self, cited_entry_id: int) -> None:
+        """Promote or demote direct citation links after target sync changes."""
+        for citing_entry_id in self.database.list_citing_entry_ids(cited_entry_id):
+            citing = self.database.get_entry(citing_entry_id)
+            export = self.database.get_obsidian_export(citing_entry_id)
+            if (
+                citing is None
+                or citing["status"] != "kept"
+                or export is None
+                or export["state"] != "synced"
+            ):
+                continue
+            try:
+                self._export_entry(citing_entry_id, resync_citing=False)
+            except (OSError, ValueError, ObsidianConflictError):
+                continue
 
     def _archive_entry(
         self,
@@ -355,6 +384,7 @@ class HeraldService:
                 relative_path=relative_path,
                 error=str(error),
             )
+            self._resync_citing_notes(entry_id)
             raise
         if result is not None:
             archive_path = active_exporter.archive_relative_path(result.archive_path)
@@ -372,6 +402,7 @@ class HeraldService:
             vault_path=str(active_exporter.vault_path),
             relative_path=relative_path,
         )
+        self._resync_citing_notes(entry_id)
         return destination
 
     def change_status(self, entry_id: int, status: str) -> dict[str, object]:

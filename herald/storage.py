@@ -1193,14 +1193,34 @@ class Database:
                            entries.title AS target_title,
                            entries.canonical_url AS target_url,
                            entries.status AS cited_status,
-                           entries.exported_path AS cited_exported_path
+                           entries.exported_path AS cited_exported_path,
+                           obsidian_exports.state AS cited_export_state,
+                           obsidian_exports.relative_path AS cited_obsidian_path
                     FROM paper_references
                     LEFT JOIN entries ON entries.id = paper_references.cited_entry_id
+                    LEFT JOIN obsidian_exports
+                      ON obsidian_exports.entry_id = paper_references.cited_entry_id
                     WHERE paper_references.citing_entry_id = ?
                     ORDER BY paper_references.position IS NULL,
                              paper_references.position, paper_references.id
                     """,
                     (entry_id,),
+                )
+            ]
+
+    def list_citing_entry_ids(self, cited_entry_id: int) -> list[int]:
+        """Return the entries with a directed reference to the target."""
+        with self.connect() as connection:
+            return [
+                int(row["citing_entry_id"])
+                for row in connection.execute(
+                    """
+                    SELECT DISTINCT citing_entry_id
+                    FROM paper_references
+                    WHERE cited_entry_id = ? AND citing_entry_id <> ?
+                    ORDER BY citing_entry_id
+                    """,
+                    (cited_entry_id, cited_entry_id),
                 )
             ]
 

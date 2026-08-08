@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 
 FRONTMATTER_START = "# herald:managed:start"
@@ -63,6 +64,38 @@ def _blockquote(value: str) -> str:
     return "\n".join(f"> {line}" if line else ">" for line in lines)
 
 
+def _yaml_list(name: str, values: list[str]) -> list[str]:
+    if not values:
+        return [f"{name}: []"]
+    return [f"{name}:", *(f"  - {_yaml_string(value)}" for value in values)]
+
+
+def _paper_properties(entry: dict[str, Any]) -> list[str]:
+    if str(entry.get("content_kind") or "paper") != "paper":
+        return []
+    identifiers = [
+        f"{item.get('scheme', '')}:{item.get('value', '')}"
+        for item in entry.get("identifiers", [])
+        if item.get("scheme") and item.get("value")
+    ]
+    keywords = [
+        str(item.get("keyword"))
+        for item in entry.get("keywords", [])
+        if item.get("kind") == "keyword" and item.get("keyword")
+    ]
+    topics = [
+        str(item.get("keyword"))
+        for item in entry.get("keywords", [])
+        if item.get("kind") == "topic" and item.get("keyword")
+    ]
+    return [
+        f"enrichment_provider: {_yaml_string(entry.get('enrichment_provider'))}",
+        *_yaml_list("identifiers", identifiers),
+        *_yaml_list("keywords", keywords),
+        *_yaml_list("topics", topics),
+    ]
+
+
 def _managed_frontmatter(entry: dict[str, Any]) -> str:
     tags = ["herald", _tag(str(entry.get("source_category", "Unsorted")))]
     content_kind = str(entry.get("content_kind") or "paper")
@@ -86,6 +119,7 @@ def _managed_frontmatter(entry: dict[str, Any]) -> str:
             f"summary_provider: {_yaml_string(entry.get('summary_provider'))}",
             f"summary_model: {_yaml_string(entry.get('summary_model'))}",
             f"summary_generated_at: {_yaml_string(entry.get('summary_generated_at'))}",
+            *_paper_properties(entry),
             "tags:",
             *(f"  - {_yaml_string(tag)}" for tag in tags),
             FRONTMATTER_END,
@@ -104,8 +138,7 @@ def _managed_body(entry: dict[str, Any]) -> str:
     source_title = str(entry.get("source_title") or "Unknown source")
     author = str(entry.get("author") or "Unknown")
     published = str(entry.get("published_at") or "Unknown")
-    return "\n".join(
-        [
+    sections = [
             BODY_START,
             f"# {title}",
             "",
@@ -124,9 +157,53 @@ def _managed_body(entry: dict[str, Any]) -> str:
             f"- Publication: {source_title}",
             f"- Author: {author}",
             f"- Published: {published}",
-            BODY_END,
-        ]
+    ]
+    if str(entry.get("content_kind") or "paper") == "paper":
+        sections.extend(["", "## References", ""])
+        references = list(entry.get("references") or [])
+        if references:
+            sections.extend(_reference_markdown(reference) for reference in references)
+        else:
+            sections.append("No references are available.")
+    sections.append(BODY_END)
+    return "\n".join(sections)
+
+
+def _markdown_label(value: object) -> str:
+    return re.sub(r"[\[\]\n\r]+", " ", str(value or "Untitled")).strip() or "Untitled"
+
+
+def _external_reference_url(reference: dict[str, Any]) -> str:
+    scheme = str(reference.get("external_scheme") or "").casefold()
+    identifier = str(reference.get("external_id") or "").strip()
+    if scheme == "doi" and identifier:
+        return f"https://doi.org/{quote(identifier, safe='/:.-_')}"
+    if scheme == "arxiv" and identifier:
+        return f"https://arxiv.org/abs/{quote(identifier, safe='/.:-_')}"
+    if scheme == "s2" and identifier:
+        return f"https://www.semanticscholar.org/paper/{quote(identifier, safe='-_')}"
+    return str(reference.get("cited_url") or reference.get("target_url") or "").strip()
+
+
+def _reference_markdown(reference: dict[str, Any]) -> str:
+    title = _markdown_label(
+        reference.get("target_title") or reference.get("cited_title") or "Untitled paper"
     )
+    relative_path = str(reference.get("cited_obsidian_path") or "").strip()
+    internal = (
+        reference.get("cited_status") == "kept"
+        and reference.get("cited_export_state") == "synced"
+        and relative_path.startswith("Herald/Papers/")
+        and relative_path.endswith(".md")
+    )
+    if internal:
+        target = relative_path[:-3].replace("|", " ").replace("]", " ")
+        alias = title.replace("|", " ")
+        return f"- [[{target}|{alias}]]"
+    external_url = _external_reference_url(reference)
+    if external_url:
+        return f"- [{title}]({external_url})"
+    return f"- {title}"
 
 
 def render_markdown(entry: dict[str, Any]) -> str:

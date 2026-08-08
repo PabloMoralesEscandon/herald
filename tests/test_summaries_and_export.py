@@ -429,6 +429,100 @@ class ExportTests(unittest.TestCase):
         self.assertIn("Move this annotation.", new_path.read_text(encoding="utf-8"))
         self.assertEqual(entry["obsidian_export"]["state"], "synced")
 
+    def test_paper_metadata_and_directed_citation_link_follow_target_sync(self) -> None:
+        self.database.add_paper_identifier(
+            self.entry_id, "doi", "10.1000/citing", is_primary=True
+        )
+        self.database.replace_entry_keywords(
+            self.entry_id,
+            [
+                {"keyword": "heterogeneous scheduling", "kind": "keyword", "score": 0.9},
+                {"keyword": "Computer Science", "kind": "topic", "score": 1.0},
+            ],
+        )
+        source_id = self.database.add_source(
+            "Citation source", "https://example.org/citations", "Research"
+        )
+        target_id, _ = self.database.upsert_entry(
+            source_id=source_id,
+            guid="cited-target",
+            url="https://example.org/target",
+            title="The cited target",
+        )
+        self.database.add_paper_identifier(target_id, "doi", "10.1000/target")
+        self.database.upsert_paper_reference(
+            self.entry_id,
+            "doi:10.1000/target",
+            external_scheme="doi",
+            external_id="10.1000/target",
+            cited_title="The cited target",
+            cited_url="https://example.org/target",
+        )
+
+        citing = self.service.change_status(self.entry_id, "kept")
+        citing_path = self.vault / citing["exported_path"]
+        external = citing_path.read_text(encoding="utf-8")
+        self.assertIn('identifiers:\n  - "doi:10.1000/citing"', external)
+        self.assertIn('keywords:\n  - "heterogeneous scheduling"', external)
+        self.assertIn('topics:\n  - "Computer Science"', external)
+        self.assertIn("- [The cited target](https://doi.org/10.1000/target)", external)
+
+        annotated = external.replace(
+            "# herald:managed:end\n---",
+            "# herald:managed:end\nreview_score: 5\n---",
+        ).replace("## My Notes\n\n", "## My Notes\n\nDo not lose this.\n")
+        citing_path.write_text(annotated, encoding="utf-8")
+
+        target = self.service.change_status(target_id, "kept")
+        promoted = citing_path.read_text(encoding="utf-8")
+        target_link = target["exported_path"].removesuffix(".md")
+        self.assertIn(f"- [[{target_link}|The cited target]]", promoted)
+        self.assertNotIn("https://doi.org/10.1000/target", promoted)
+        self.assertIn("review_score: 5", promoted)
+        self.assertIn("Do not lose this.", promoted)
+        target_note = (self.vault / target["exported_path"]).read_text(encoding="utf-8")
+        self.assertNotIn("quoted unsafe", target_note)
+        self.assertNotIn("10.1000/citing", target_note)
+
+        self.service.change_status(target_id, "read")
+        demoted = citing_path.read_text(encoding="utf-8")
+        self.assertIn("- [The cited target](https://doi.org/10.1000/target)", demoted)
+        self.assertNotIn(f"[[{target_link}", demoted)
+        self.assertIn("Do not lose this.", demoted)
+
+    def test_kept_but_unsynced_target_stays_an_external_reference(self) -> None:
+        source_id = self.database.add_source(
+            "Citation source", "https://example.org/unsynced", "Research"
+        )
+        target_id, _ = self.database.upsert_entry(
+            source_id=source_id,
+            guid="unsynced-target",
+            url="https://example.org/unsynced-target",
+            title="Unsynced target",
+        )
+        self.database.add_paper_identifier(target_id, "arxiv", "2608.01234")
+        self.database.upsert_paper_reference(
+            self.entry_id,
+            "arxiv:2608.01234",
+            external_scheme="arxiv",
+            external_id="2608.01234",
+            cited_title="Unsynced target",
+        )
+        self.database.set_status(target_id, "kept")
+        self.database.upsert_obsidian_export(
+            target_id,
+            state="failed",
+            vault_path=str(self.vault),
+            relative_path=f"Herald/Papers/herald-{target_id:06d}.md",
+            error="disk unavailable",
+        )
+
+        citing = self.service.change_status(self.entry_id, "kept")
+        document = (self.vault / citing["exported_path"]).read_text(encoding="utf-8")
+
+        self.assertIn("[Unsynced target](https://arxiv.org/abs/2608.01234)", document)
+        self.assertNotIn("[[Herald/Papers/", document)
+
 
 if __name__ == "__main__":
     unittest.main()
