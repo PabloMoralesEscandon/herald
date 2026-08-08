@@ -21,9 +21,10 @@ Open <http://127.0.0.1:8765>. `demo` adds two deterministic articles, so this
 flow works without internet access. Stop the server with Ctrl+C.
 
 In the dashboard, select an entry, generate its summary, then keep or discard
-it. A kept entry can be exported with **Export to Obsidian**. The resulting
-Markdown note contains frontmatter, summary, feed text, original URL, author,
-publication date, and a blank notes section.
+it. Keeping an entry automatically creates its Obsidian note. The resulting
+Markdown contains frontmatter, summary, feed text, original URL, author,
+publication date, and a personal notes section. Herald updates only its marked
+generated blocks, so custom properties and personal notes survive every sync.
 
 ## Fetch real sources
 
@@ -48,14 +49,23 @@ line, run `python -m herald.cli --help`.
 By default Herald writes everything below `.herald/` in the current directory:
 
 - `.herald/herald.db` — SQLite database
-- `.herald/vault/Herald/<category>/*.md` — exported notes
+- `.herald/vault/Herald/Papers/*.md` — kept paper notes
+- `.herald/vault/Herald/News/<publisher>/*.md` — kept news notes
+- `.herald/obsidian-archive/` — recoverable notes removed from the vault
 
 Point exports at an existing Obsidian vault by setting `HERALD_VAULT` before
-starting Herald. Existing exported notes are updated in place.
+starting Herald or with `PUT /api/settings/obsidian`. The API accepts only an
+existing absolute directory. Stable note names do not change with article
+titles. Leaving the Kept state moves the note outside the vault into the
+archive; keeping it again restores the latest copy and its annotations.
 
 ```bash
 HERALD_VAULT="/path/to/Obsidian Vault" python -m herald.cli serve
 ```
+
+Keep remains successful when the vault is unavailable or a note has a safety
+conflict. Herald records the sync error and the dashboard offers a retry rather
+than rolling back reading state or overwriting an unknown file.
 
 ## Optional local AI
 

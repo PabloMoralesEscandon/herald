@@ -70,7 +70,7 @@ class WebTests(unittest.TestCase):
             html = response.read().decode()
         self.assertEqual(response.status, 200)
         self.assertIn("Herald", html)
-        self.assertIn("/static/app.js?v=17", html)
+        self.assertIn("/static/app.js?v=18", html)
         self.assertIn("/static/styles.css?v=16", html)
         self.assertIn('id="reader-pdf"', html)
         self.assertIn('id="reader-content" class="reader-content" hidden', html)
@@ -160,6 +160,8 @@ class WebTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(entry["status"], "kept")
         self.assertEqual(self.database.get_entry(entry_id)["status"], "kept")
+        self.assertEqual(entry["obsidian_export"]["state"], "synced")
+        self.assertTrue((self.settings.vault_path / entry["exported_path"]).is_file())
 
     def test_rejects_unknown_action(self) -> None:
         entry_id = self.database.list_entries()[0]["id"]
@@ -214,8 +216,46 @@ class WebTests(unittest.TestCase):
         self.assertTrue(Path(payload["path"]).is_file())
         self.assertEqual(
             payload["entry"]["exported_path"],
-            "Herald/Demo/000001 - A Low-Latency Interconnect for Modular Chiplets.md",
+            "Herald/Papers/herald-000001.md",
         )
+
+    def test_obsidian_settings_require_an_existing_absolute_vault(self) -> None:
+        status, settings = self.request("/api/settings/obsidian")
+        self.assertEqual(status, 200)
+        self.assertEqual(settings["vault_path"], str(self.settings.vault_path.resolve()))
+
+        status, payload = self.request(
+            "/api/settings/obsidian",
+            method="PUT",
+            payload={"vault_path": "relative/vault"},
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("absolute", payload["error"])
+
+        chosen = self.settings.data_dir / "Existing Vault"
+        chosen.mkdir()
+        status, configured = self.request(
+            "/api/settings/obsidian",
+            method="PUT",
+            payload={"vault_path": str(chosen)},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(configured["vault_path"], str(chosen.resolve()))
+        self.assertTrue(configured["configured"])
+
+    def test_obsidian_retry_returns_sync_state(self) -> None:
+        entry_id = self.database.list_entries()[0]["id"]
+        self.database.set_status(entry_id, "kept")
+
+        status, payload = self.request(
+            f"/api/entries/{entry_id}/obsidian/retry",
+            method="POST",
+            payload={},
+        )
+
+        self.assertEqual(status, 200)
+        self.assertTrue(Path(payload["path"]).is_file())
+        self.assertEqual(payload["entry"]["obsidian_export"]["state"], "synced")
 
 
 if __name__ == "__main__":

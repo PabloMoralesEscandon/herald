@@ -6,7 +6,6 @@ from typing import Sequence
 
 from .config import Settings
 from .demo import load_demo
-from .obsidian import ObsidianExporter
 from .service import HeraldService
 from .storage import Database
 from .summaries import LocalSummarizer
@@ -41,7 +40,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     service = HeraldService(
         database,
         summarizer=LocalSummarizer(settings.ollama_url, settings.ollama_model),
-        exporter=ObsidianExporter(settings.vault_path),
+        default_vault_path=settings.vault_path,
+        archive_root=settings.data_dir / "obsidian-archive",
     )
 
     if args.command == "init":

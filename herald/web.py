@@ -9,7 +9,7 @@ from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
 from .config import Settings
-from .obsidian import ObsidianExporter
+from .obsidian import ObsidianConflictError
 from .service import HeraldService
 from .storage import Database
 from .summaries import LocalSummarizer
@@ -63,6 +63,9 @@ class HeraldRequestHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/stats":
             self._send_json(self.server.database.entry_counts())
             return
+        if parsed.path == "/api/settings/obsidian":
+            self._send_json(self.server.service.get_obsidian_settings())
+            return
         page_entry_id = self._page_entry_id(parsed.path)
         if page_entry_id is not None:
             self._redirect_to_inbox()
@@ -70,6 +73,13 @@ class HeraldRequestHandler(BaseHTTPRequestHandler):
         entry_id = self._entry_id(parsed.path)
         if entry_id is not None:
             self._get_entry(entry_id)
+            return
+        self._send_error(HTTPStatus.NOT_FOUND, "Not found")
+
+    def do_PUT(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+        path = urlparse(self.path).path
+        if path == "/api/settings/obsidian":
+            self._configure_obsidian()
             return
         self._send_error(HTTPStatus.NOT_FOUND, "Not found")
 
@@ -92,6 +102,10 @@ class HeraldRequestHandler(BaseHTTPRequestHandler):
         entry_export = self._entry_subroute(path, "export")
         if entry_export is not None:
             self._export(entry_export)
+            return
+        entry_retry = self._entry_nested_subroute(path, "obsidian", "retry")
+        if entry_retry is not None:
+            self._retry_obsidian(entry_retry)
             return
         self._send_error(HTTPStatus.NOT_FOUND, "Not found")
 
@@ -133,7 +147,7 @@ class HeraldRequestHandler(BaseHTTPRequestHandler):
         self._send_json(entries)
 
     def _get_entry(self, entry_id: int) -> None:
-        entry = self.server.database.get_entry(entry_id)
+        entry = self.server.service.entry_with_obsidian_state(entry_id)
         if entry is None:
             self._send_error(HTTPStatus.NOT_FOUND, "Entry not found")
             return
@@ -176,10 +190,12 @@ class HeraldRequestHandler(BaseHTTPRequestHandler):
                 "action must be read, unread, keep, or discard",
             )
             return
-        if not self.server.database.set_status(entry_id, status):
+        try:
+            entry = self.server.service.change_status(entry_id, status)
+        except KeyError:
             self._send_error(HTTPStatus.NOT_FOUND, "Entry not found")
             return
-        self._send_json(self.server.database.get_entry(entry_id))
+        self._send_json(entry)
 
     def _refresh(self) -> None:
         results = self.server.service.refresh_all()
@@ -215,7 +231,7 @@ class HeraldRequestHandler(BaseHTTPRequestHandler):
         except KeyError:
             self._send_error(HTTPStatus.NOT_FOUND, "Entry not found")
             return
-        except ValueError as error:
+        except (ValueError, ObsidianConflictError) as error:
             self._send_error(HTTPStatus.CONFLICT, str(error))
             return
         except OSError as error:
@@ -223,10 +239,49 @@ class HeraldRequestHandler(BaseHTTPRequestHandler):
             return
         self._send_json(
             {
-                "entry": self.server.database.get_entry(entry_id),
+                "entry": self.server.service.entry_with_obsidian_state(entry_id),
                 "path": str(destination),
             }
         )
+
+    def _retry_obsidian(self, entry_id: int) -> None:
+        try:
+            destination = self.server.service.retry_obsidian(entry_id)
+        except KeyError:
+            self._send_error(HTTPStatus.NOT_FOUND, "Entry not found")
+            return
+        except (ValueError, ObsidianConflictError) as error:
+            self._send_error(HTTPStatus.CONFLICT, str(error))
+            return
+        except OSError as error:
+            self._send_error(
+                HTTPStatus.INTERNAL_SERVER_ERROR, f"Obsidian operation failed: {error}"
+            )
+            return
+        self._send_json(
+            {
+                "entry": self.server.service.entry_with_obsidian_state(entry_id),
+                "path": str(destination) if destination is not None else None,
+            }
+        )
+
+    def _configure_obsidian(self) -> None:
+        payload = self._read_json()
+        if payload is None:
+            return
+        vault_path = self._required_text(payload, "vault_path")
+        if not vault_path:
+            self._send_error(HTTPStatus.BAD_REQUEST, "vault_path is required")
+            return
+        try:
+            settings = self.server.service.configure_obsidian(vault_path)
+        except ValueError as error:
+            self._send_error(HTTPStatus.BAD_REQUEST, str(error))
+            return
+        except (OSError, ObsidianConflictError) as error:
+            self._send_error(HTTPStatus.CONFLICT, str(error))
+            return
+        self._send_json(settings)
 
     def _read_json(self) -> dict[str, Any] | None:
         if "application/json" not in self.headers.get("Content-Type", ""):
@@ -281,6 +336,20 @@ class HeraldRequestHandler(BaseHTTPRequestHandler):
             return None
 
     @staticmethod
+    def _entry_nested_subroute(
+        path: str, parent: str, subroute: str
+    ) -> int | None:
+        parts = path.strip("/").split("/")
+        if len(parts) != 5 or parts[:2] != ["api", "entries"]:
+            return None
+        if parts[3:] != [parent, subroute]:
+            return None
+        try:
+            return int(unquote(parts[2]))
+        except ValueError:
+            return None
+
+    @staticmethod
     def _page_entry_id(path: str) -> int | None:
         parts = path.strip("/").split("/")
         if len(parts) != 2 or parts[0] != "entry":
@@ -323,8 +392,10 @@ def make_server(
     active_service = service or HeraldService(
         database,
         summarizer=LocalSummarizer(settings.ollama_url, settings.ollama_model),
-        exporter=ObsidianExporter(settings.vault_path),
+        default_vault_path=settings.vault_path,
+        archive_root=settings.data_dir / "obsidian-archive",
     )
+    active_service.reconcile_obsidian()
     return HeraldServer(
         (host if host is not None else settings.host, port if port is not None else settings.port),
         database,
