@@ -114,7 +114,7 @@ class EndToEndWorkflowTests(unittest.TestCase):
         initialized = self._run_cli("init")
         demonstrated = self._run_cli("demo")
 
-        self.assertIn("11 sources added", initialized.stdout)
+        self.assertIn("15 sources added", initialized.stdout)
         self.assertIn("Loaded 2 demo entries", demonstrated.stdout)
         self.assertTrue((self.data_dir / "herald.db").is_file())
 

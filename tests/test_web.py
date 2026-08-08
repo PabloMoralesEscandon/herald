@@ -186,8 +186,36 @@ class WebTests(unittest.TestCase):
         )
         self.assertEqual(status, 201)
         self.assertEqual(source["category"], "Chip Design")
+        self.assertEqual(source["content_kind"], "paper")
+
+        status, news_source = self.request(
+            "/api/sources",
+            method="POST",
+            payload={
+                "title": "Official News",
+                "url": "https://example.com/news.xml?utm_source=setup",
+                "category": "Company",
+                "content_kind": "news",
+            },
+        )
+        self.assertEqual(status, 201)
+        self.assertEqual(news_source["content_kind"], "news")
+        self.assertEqual(news_source["url"], "https://example.com/news.xml")
+
+        invalid_status, invalid = self.request(
+            "/api/sources",
+            method="POST",
+            payload={
+                "title": "Invalid",
+                "url": "https://example.com/invalid.xml",
+                "category": "Company",
+                "content_kind": "podcast",
+            },
+        )
+        self.assertEqual(invalid_status, 400)
+        self.assertIn("paper or news", invalid["error"])
         _, sources = self.request("/api/sources")
-        self.assertEqual(len(sources), 2)
+        self.assertEqual(len(sources), 3)
 
     def test_imports_a_paper_and_reports_idempotent_repeats(self) -> None:
         metadata = {

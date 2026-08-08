@@ -61,8 +61,21 @@ placed inside the vault.
 ## Sources and ingestion
 
 - `GET /api/sources`
-- `POST /api/sources` with `{"title":"…","url":"…","category":"…"}`
+- `POST /api/sources` with
+  `{"title":"…","url":"…","category":"…","content_kind":"paper|news"}`
 - `POST /api/refresh` to fetch all enabled sources
+
+Herald seeds its research feeds plus official NVIDIA, OpenAI, AMD, and Intel
+announcement feeds. A source URL may point directly to RSS/Atom or to a page
+with a standard RSS/Atom autodiscovery link. Herald does not scrape HTML lists.
+The first successful refresh of a News source imports only items published in
+the latest 30 days; later refreshes accept every newly observed item.
+
+Source records expose `resolved_url`, `etag`, `last_modified`,
+`refresh_attempted_at`, `refresh_succeeded_at`, and `refresh_error`. Refreshes
+use conditional HTTP requests and treat `304 Not Modified` as a healthy no-op.
+Article URLs are canonicalized and known tracking parameters are removed before
+cross-source deduplication.
 
 ## Manual paper import
 

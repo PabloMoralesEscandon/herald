@@ -108,11 +108,12 @@ class FoundationTests(unittest.TestCase):
                 )
             }
             version = int(migrated.execute("PRAGMA user_version").fetchone()[0])
-        self.assertEqual(version, 3)
+        self.assertEqual(version, 4)
         self.assertTrue(
             {
                 "paper_identifiers",
                 "paper_references",
+                "source_bootstrap_skips",
                 "entry_keywords",
                 "relevance_profiles",
                 "entry_rankings",

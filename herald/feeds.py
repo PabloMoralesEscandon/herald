@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 from xml.etree import ElementTree
 
 
@@ -42,6 +42,31 @@ class _TextExtractor(HTMLParser):
         if tag in {"p", "div", "li", "h1", "h2", "h3", "tr"}:
             self.parts.append("\n")
 
+
+class _FeedLinkExtractor(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.feed_links: list[str] = []
+
+    def handle_starttag(
+        self, tag: str, attrs: list[tuple[str, str | None]]
+    ) -> None:
+        if tag.lower() != "link":
+            return
+        values = {key.lower(): (value or "") for key, value in attrs}
+        relations = {item.casefold() for item in values.get("rel", "").split()}
+        media_type = values.get("type", "").split(";", 1)[0].strip().casefold()
+        if (
+            "alternate" in relations
+            and media_type
+            in {
+                "application/rss+xml",
+                "application/atom+xml",
+                "application/rdf+xml",
+            }
+            and values.get("href", "").strip()
+        ):
+            self.feed_links.append(values["href"].strip())
 
 def _local_name(tag: str) -> str:
     return tag.rsplit("}", 1)[-1].lower()
@@ -82,7 +107,22 @@ def _plain_text(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
 
 
-def _normalized_url(value: str) -> str:
+_TRACKING_PARAMETERS = {
+    "fbclid",
+    "gclid",
+    "dclid",
+    "msclkid",
+    "mc_cid",
+    "mc_eid",
+    "vero_conv",
+    "vero_id",
+    "oly_anon_id",
+    "oly_enc_id",
+}
+
+
+def canonicalize_url(value: str) -> str:
+    """Normalize an article URL and remove only recognized tracking parameters."""
     value = value.strip()
     if not value:
         return ""
@@ -96,9 +136,49 @@ def _normalized_url(value: str) -> str:
         or (parts.scheme.lower() == "https" and port == 443)
     ):
         hostname = f"{hostname}:{port}"
+    query = [
+        (key, item)
+        for key, item in parse_qsl(parts.query, keep_blank_values=True)
+        if not key.casefold().startswith("utm_")
+        and key.casefold() not in _TRACKING_PARAMETERS
+    ]
+    query.sort(key=lambda pair: (pair[0].casefold(), pair[1]))
     return urlunsplit(
-        (parts.scheme.lower(), hostname, parts.path or "/", parts.query, "")
+        (
+            parts.scheme.lower(),
+            hostname,
+            parts.path or "/",
+            urlencode(query, doseq=True),
+            "",
+        )
     )
+
+
+def discover_feed_url(document: bytes | str, page_url: str) -> str | None:
+    """Return the first RSS/Atom autodiscovery link from an HTML document.
+
+    This deliberately reads only standard ``<link rel=alternate>`` metadata; it
+    is not a page/article scraper.
+    """
+    if isinstance(document, bytes):
+        try:
+            text = document.decode("utf-8", errors="replace")
+        except (UnicodeDecodeError, AttributeError):
+            return None
+    else:
+        text = document
+    parser = _FeedLinkExtractor()
+    try:
+        parser.feed(text)
+    except ValueError:
+        return None
+    if not parser.feed_links:
+        return None
+    discovered = urljoin(page_url, parser.feed_links[0])
+    parts = urlsplit(discovered)
+    if parts.scheme.casefold() not in {"http", "https"} or not parts.netloc:
+        return None
+    return canonicalize_url(discovered)
 
 
 def _published_at(value: str) -> str | None:
@@ -149,7 +229,7 @@ def _parse_atom(root: ElementTree.Element) -> list[FeedEntry]:
     parsed: list[FeedEntry] = []
     for item in _children(root, "entry"):
         title = _plain_text(_element_text(_child(item, "title"))) or "Untitled"
-        url = _normalized_url(_atom_link(item))
+        url = canonicalize_url(_atom_link(item))
         published = _published_at(
             _element_text(_child(item, "published", "updated"))
         )
@@ -183,7 +263,7 @@ def _parse_rss(root: ElementTree.Element) -> list[FeedEntry]:
     parsed: list[FeedEntry] = []
     for item in _children(container, "item"):
         title = _plain_text(_element_text(_child(item, "title"))) or "Untitled"
-        url = _normalized_url(_rss_link(item))
+        url = canonicalize_url(_rss_link(item))
         published = _published_at(
             _element_text(_child(item, "pubdate", "published", "date", "updated"))
         )

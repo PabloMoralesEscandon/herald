@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS sources (
     content_kind TEXT NOT NULL DEFAULT 'paper'
         CHECK (content_kind IN ('paper', 'news')),
     adapter TEXT NOT NULL DEFAULT 'feed',
+    resolved_url TEXT NOT NULL DEFAULT '',
     etag TEXT NOT NULL DEFAULT '',
     last_modified TEXT NOT NULL DEFAULT '',
     refresh_attempted_at TEXT,
@@ -86,6 +87,14 @@ EXTENDED_SCHEMA = """
 CREATE INDEX IF NOT EXISTS sources_kind_idx ON sources(content_kind, enabled);
 CREATE INDEX IF NOT EXISTS entries_kind_idx ON entries(content_kind);
 CREATE INDEX IF NOT EXISTS entries_canonical_key_idx ON entries(canonical_key);
+CREATE INDEX IF NOT EXISTS entries_canonical_url_idx ON entries(canonical_url);
+
+CREATE TABLE IF NOT EXISTS source_bootstrap_skips (
+    source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    guid TEXT NOT NULL,
+    skipped_at TEXT NOT NULL,
+    PRIMARY KEY (source_id, guid)
+);
 
 CREATE TABLE IF NOT EXISTS paper_identifiers (
     entry_id INTEGER NOT NULL REFERENCES entries(id) ON DELETE CASCADE,
@@ -289,6 +298,7 @@ class Database:
             source_migrations = {
                 "content_kind": "TEXT NOT NULL DEFAULT 'paper'",
                 "adapter": "TEXT NOT NULL DEFAULT 'feed'",
+                "resolved_url": "TEXT NOT NULL DEFAULT ''",
                 "etag": "TEXT NOT NULL DEFAULT ''",
                 "last_modified": "TEXT NOT NULL DEFAULT ''",
                 "refresh_attempted_at": "TEXT",
@@ -352,7 +362,7 @@ class Database:
                 ON CONFLICT(entry_id) DO NOTHING
                 """
             )
-            connection.execute("PRAGMA user_version = 3")
+            connection.execute("PRAGMA user_version = 4")
 
     def add_source(
         self,
@@ -401,6 +411,39 @@ class Database:
         with self.connect() as connection:
             return [dict(row) for row in connection.execute(query, params)]
 
+    def get_source(self, source_id: int) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM sources WHERE id = ?", (source_id,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def list_source_bootstrap_skips(self, source_id: int) -> set[str]:
+        with self.connect() as connection:
+            return {
+                str(row["guid"])
+                for row in connection.execute(
+                    "SELECT guid FROM source_bootstrap_skips WHERE source_id = ?",
+                    (source_id,),
+                )
+            }
+
+    def add_source_bootstrap_skips(
+        self, source_id: int, guids: list[str]
+    ) -> None:
+        if not guids:
+            return
+        skipped_at = utc_now()
+        with self.connect() as connection:
+            connection.executemany(
+                """
+                INSERT INTO source_bootstrap_skips(source_id, guid, skipped_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(source_id, guid) DO NOTHING
+                """,
+                ((source_id, guid, skipped_at) for guid in guids),
+            )
+
     def upsert_entry(
         self,
         *,
@@ -433,13 +476,23 @@ class Database:
                 SELECT id FROM entries
                 WHERE (source_id = ? AND guid = ?)
                    OR (? <> '' AND url = ?)
+                   OR (? <> '' AND canonical_url = ?)
                 ORDER BY CASE
                     WHEN source_id = ? AND guid = ? THEN 0
                     ELSE 1
                 END
                 LIMIT 1
                 """,
-                (source_id, guid, url, url, source_id, guid),
+                (
+                    source_id,
+                    guid,
+                    url,
+                    url,
+                    resolved_canonical_url,
+                    resolved_canonical_url,
+                    source_id,
+                    guid,
+                ),
             ).fetchone()
             if existing:
                 connection.execute(
@@ -877,6 +930,7 @@ class Database:
         succeeded: bool,
         etag: str | None = None,
         last_modified: str | None = None,
+        resolved_url: str | None = None,
         error: str = "",
     ) -> bool:
         now = utc_now()
@@ -888,7 +942,8 @@ class Database:
                     refresh_succeeded_at = CASE WHEN ? THEN ? ELSE refresh_succeeded_at END,
                     refresh_error = CASE WHEN ? THEN '' ELSE ? END,
                     etag = COALESCE(?, etag),
-                    last_modified = COALESCE(?, last_modified)
+                    last_modified = COALESCE(?, last_modified),
+                    resolved_url = COALESCE(?, resolved_url)
                 WHERE id = ?
                 """,
                 (
@@ -899,6 +954,7 @@ class Database:
                     error,
                     etag,
                     last_modified,
+                    resolved_url,
                     source_id,
                 ),
             )
