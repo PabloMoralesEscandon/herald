@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from contextlib import AbstractContextManager
+from datetime import UTC, datetime
 from json import loads
 from pathlib import Path
 from unittest.mock import patch
@@ -226,6 +227,184 @@ class ExportTests(unittest.TestCase):
             f"Herald/News/Vendor News/herald-{news_id:06d}.md",
         )
         self.assertTrue((self.vault / entry["exported_path"]).is_file())
+
+    def test_news_note_contains_managed_metadata_and_survives_archive_restore(self) -> None:
+        source_id = self.database.add_source(
+            "NVIDIA Newsroom",
+            "https://nvidia.example/news.xml",
+            "NVIDIA",
+            content_kind="news",
+        )
+        news_id, _ = self.database.upsert_entry(
+            source_id=source_id,
+            guid="accelerator-launch",
+            url="https://nvidia.example/launch?utm_source=email",
+            canonical_url="https://nvidia.example/launch",
+            title="NVIDIA launches an accelerator",
+            author="NVIDIA Newsroom",
+            published_at="2026-08-07T09:00:00+00:00",
+            content="The accelerator is available to developers.",
+            summary="A new accelerator has launched.",
+            summary_provider="extractive",
+            content_kind="news",
+        )
+        self.database.replace_entry_keywords(
+            news_id,
+            [
+                {"keyword": "AI accelerator", "kind": "keyword", "score": 0.9},
+                {"keyword": "Chip launches", "kind": "topic", "score": 0.8},
+            ],
+        )
+        profile = self.database.get_relevance_profile("news")
+        assert profile is not None
+        self.database.upsert_entry_ranking(
+            news_id,
+            int(profile["id"]),
+            score=84.25,
+            bucket="relevant",
+            explanation={
+                "matched_interests": ["new processors GPUs accelerators"],
+                "include_matches": ["launches"],
+                "decision": "score meets threshold",
+            },
+            model="tfidf-v1",
+        )
+
+        kept = self.service.change_status(news_id, "kept")
+        path = self.vault / kept["exported_path"]
+        document = path.read_text(encoding="utf-8")
+
+        self.assertEqual(
+            kept["exported_path"],
+            f"Herald/News/NVIDIA Newsroom/herald-{news_id:06d}.md",
+        )
+        self.assertIn('type: "news"', document)
+        self.assertIn('publisher: "NVIDIA Newsroom"', document)
+        self.assertIn('canonical_source: "https://nvidia.example/launch"', document)
+        self.assertIn('keywords:\n  - "AI accelerator"', document)
+        self.assertIn('topics:\n  - "Chip launches"', document)
+        self.assertIn("relevance_score: 84.25", document)
+        self.assertIn('relevance_bucket: "relevant"', document)
+        self.assertIn('relevance_model: "tfidf-v1"', document)
+        self.assertIn('  - "Matched interest: new processors GPUs accelerators"', document)
+        self.assertIn('  - "Included phrase: launches"', document)
+        self.assertIn('status: "kept"', document)
+        self.assertIn('summary_provider: "extractive"', document)
+        self.assertIn("## Announcement", document)
+        self.assertIn("- Publisher: NVIDIA Newsroom", document)
+        self.assertIn("- Original: <https://nvidia.example/launch>", document)
+        self.assertNotIn("## References", document)
+        self.assertNotIn("identifiers:", document)
+
+        path.write_text(
+            document.replace("## My Notes\n\n", "## My Notes\n\nTrack benchmarks.\n"),
+            encoding="utf-8",
+        )
+        archived = self.service.change_status(news_id, "read")
+        self.assertEqual(archived["obsidian_export"]["state"], "archived")
+        self.assertFalse(path.exists())
+
+        restored = self.service.change_status(news_id, "kept")
+        restored_document = (self.vault / restored["exported_path"]).read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("Track benchmarks.", restored_document)
+        self.assertNotIn("## References", restored_document)
+
+    def test_failed_news_export_can_be_retried_without_changing_keep(self) -> None:
+        source_id = self.database.add_source(
+            "OpenAI News",
+            "https://openai.example/news.xml",
+            "OpenAI",
+            content_kind="news",
+        )
+        news_id, _ = self.database.upsert_entry(
+            source_id=source_id,
+            guid="model-launch",
+            url="https://openai.example/model",
+            title="A model launch",
+            content_kind="news",
+        )
+        self.vault.write_text("temporarily occupied", encoding="utf-8")
+
+        kept = self.service.change_status(news_id, "kept")
+
+        self.assertEqual(kept["status"], "kept")
+        self.assertEqual(kept["obsidian_export"]["state"], "failed")
+        self.vault.unlink()
+        retried = self.service.retry_obsidian(news_id)
+        self.assertIsNotNone(retried)
+        self.assertEqual(
+            self.database.get_obsidian_export(news_id)["state"], "synced"
+        )
+        self.assertTrue(retried.is_file())
+
+    def test_news_refresh_and_cross_feed_dedupe_update_one_preserved_note(self) -> None:
+        initial = b"""<?xml version="1.0"?><rss version="2.0"><channel>
+          <title>Vendor News</title><item><guid>launch-one</guid>
+          <title>First launch title</title>
+          <link>https://vendor.example/launch?utm_source=email</link>
+          <pubDate>Fri, 07 Aug 2026 09:00:00 GMT</pubDate>
+          <description>Initial launch details.</description>
+          </item></channel></rss>"""
+        refreshed = initial.replace(
+            b"First launch title", b"Updated launch title"
+        ).replace(b"Initial launch details.", b"Updated launch details.")
+        duplicate = refreshed.replace(b"launch-one", b"different-guid").replace(
+            b"?utm_source=email", b"?fbclid=tracker"
+        ).replace(b"Updated launch title", b"Canonical duplicate title")
+        documents = {
+            "https://vendor.example/first.xml": [initial, refreshed],
+            "https://vendor.example/second.xml": [duplicate],
+        }
+
+        def fetcher(url: str) -> bytes:
+            return documents[url].pop(0)
+
+        first_source = self.database.add_source(
+            "Vendor News",
+            "https://vendor.example/first.xml",
+            "Vendor",
+            content_kind="news",
+        )
+        second_source = self.database.add_source(
+            "Vendor Blog",
+            "https://vendor.example/second.xml",
+            "Vendor",
+            content_kind="news",
+        )
+        service = HeraldService(
+            self.database,
+            fetcher=fetcher,
+            exporter=ObsidianExporter(self.vault),
+            now=lambda: datetime(2026, 8, 8, tzinfo=UTC),
+        )
+        service.refresh_source(self.database.get_source(first_source))
+        entry = self.database.list_entries(content_kind="news")[0]
+        kept = service.change_status(int(entry["id"]), "kept")
+        path = self.vault / kept["exported_path"]
+        path.write_text(
+            path.read_text(encoding="utf-8").replace(
+                "## My Notes\n\n", "## My Notes\n\nCompare launch claims.\n"
+            ),
+            encoding="utf-8",
+        )
+
+        service.refresh_source(self.database.get_source(first_source))
+        service.refresh_source(self.database.get_source(second_source))
+
+        entries = self.database.list_entries(content_kind="news")
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["source_id"], first_source)
+        self.assertEqual(entries[0]["status"], "kept")
+        self.assertEqual(entries[0]["exported_path"], kept["exported_path"])
+        self.assertEqual(len(list(self.vault.rglob("*.md"))), 1)
+        updated = path.read_text(encoding="utf-8")
+        self.assertIn("# Canonical duplicate title", updated)
+        self.assertIn("Updated launch details.", updated)
+        self.assertIn("Compare launch claims.", updated)
+        self.assertIn('publisher: "Vendor News"', updated)
+        self.assertNotIn("## References", updated)
 
     def test_keep_succeeds_when_export_fails(self) -> None:
         invalid_vault = self.vault.parent / "not-a-directory"

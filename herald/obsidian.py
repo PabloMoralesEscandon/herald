@@ -70,29 +70,68 @@ def _yaml_list(name: str, values: list[str]) -> list[str]:
     return [f"{name}:", *(f"  - {_yaml_string(value)}" for value in values)]
 
 
+def _keyword_values(entry: dict[str, Any], kind: str) -> list[str]:
+    return [
+        str(item.get("keyword"))
+        for item in entry.get("keywords", [])
+        if item.get("kind") == kind and item.get("keyword")
+    ]
+
+
 def _paper_properties(entry: dict[str, Any]) -> list[str]:
-    if str(entry.get("content_kind") or "paper") != "paper":
-        return []
     identifiers = [
         f"{item.get('scheme', '')}:{item.get('value', '')}"
         for item in entry.get("identifiers", [])
         if item.get("scheme") and item.get("value")
     ]
-    keywords = [
-        str(item.get("keyword"))
-        for item in entry.get("keywords", [])
-        if item.get("kind") == "keyword" and item.get("keyword")
-    ]
-    topics = [
-        str(item.get("keyword"))
-        for item in entry.get("keywords", [])
-        if item.get("kind") == "topic" and item.get("keyword")
-    ]
     return [
         f"enrichment_provider: {_yaml_string(entry.get('enrichment_provider'))}",
         *_yaml_list("identifiers", identifiers),
-        *_yaml_list("keywords", keywords),
-        *_yaml_list("topics", topics),
+        *_yaml_list("keywords", _keyword_values(entry, "keyword")),
+        *_yaml_list("topics", _keyword_values(entry, "topic")),
+    ]
+
+
+def _relevance_reasons(ranking: dict[str, Any]) -> list[str]:
+    explanation = ranking.get("explanation")
+    if not isinstance(explanation, dict):
+        return []
+    reasons: list[str] = []
+    for name, prefix in (
+        ("matched_interests", "Matched interest"),
+        ("include_matches", "Included phrase"),
+        ("never_show_matches", "Excluded phrase"),
+    ):
+        values = explanation.get(name, [])
+        if isinstance(values, list):
+            reasons.extend(f"{prefix}: {value}" for value in values if value)
+    decision = explanation.get("decision")
+    if decision:
+        reasons.append(str(decision))
+    return list(dict.fromkeys(reasons))
+
+
+def _news_properties(entry: dict[str, Any]) -> list[str]:
+    ranking = entry.get("relevance")
+    if not isinstance(ranking, dict):
+        ranking = {}
+    score = ranking.get("score")
+    try:
+        score_value = json.dumps(float(score)) if score is not None else "null"
+    except (TypeError, ValueError):
+        score_value = "null"
+    return [
+        'type: "news"',
+        f"publisher: {_yaml_string(entry.get('source_title'))}",
+        f"canonical_source: {_yaml_string(entry.get('canonical_url') or entry.get('url'))}",
+        f"updated_at: {_yaml_string(entry.get('updated_at'))}",
+        *_yaml_list("keywords", _keyword_values(entry, "keyword")),
+        *_yaml_list("topics", _keyword_values(entry, "topic")),
+        f"relevance_score: {score_value}",
+        f"relevance_bucket: {_yaml_string(ranking.get('bucket') or 'pending')}",
+        f"relevance_model: {_yaml_string(ranking.get('model'))}",
+        f"relevance_scored_at: {_yaml_string(ranking.get('scored_at'))}",
+        *_yaml_list("relevance_reasons", _relevance_reasons(ranking)),
     ]
 
 
@@ -101,6 +140,11 @@ def _managed_frontmatter(entry: dict[str, Any]) -> str:
     content_kind = str(entry.get("content_kind") or "paper")
     if content_kind not in tags:
         tags.append(content_kind)
+    kind_properties = (
+        _news_properties(entry)
+        if content_kind == "news"
+        else _paper_properties(entry)
+    )
     return "\n".join(
         [
             FRONTMATTER_START,
@@ -119,7 +163,7 @@ def _managed_frontmatter(entry: dict[str, Any]) -> str:
             f"summary_provider: {_yaml_string(entry.get('summary_provider'))}",
             f"summary_model: {_yaml_string(entry.get('summary_model'))}",
             f"summary_generated_at: {_yaml_string(entry.get('summary_generated_at'))}",
-            *_paper_properties(entry),
+            *kind_properties,
             "tags:",
             *(f"  - {_yaml_string(tag)}" for tag in tags),
             FRONTMATTER_END,
@@ -138,6 +182,16 @@ def _managed_body(entry: dict[str, Any]) -> str:
     source_title = str(entry.get("source_title") or "Unknown source")
     author = str(entry.get("author") or "Unknown")
     published = str(entry.get("published_at") or "Unknown")
+    content_heading = (
+        "## Announcement"
+        if str(entry.get("content_kind") or "paper") == "news"
+        else "## Article text"
+    )
+    publication_label = (
+        "Publisher"
+        if str(entry.get("content_kind") or "paper") == "news"
+        else "Publication"
+    )
     sections = [
             BODY_START,
             f"# {title}",
@@ -147,14 +201,14 @@ def _managed_body(entry: dict[str, Any]) -> str:
             ">",
             _blockquote(summary),
             "",
-            "## Article text",
+            content_heading,
             "",
             content.strip(),
             "",
             "## Source",
             "",
             f"- Original: <{source_url}>" if source_url else "- Original: unavailable",
-            f"- Publication: {source_title}",
+            f"- {publication_label}: {source_title}",
             f"- Author: {author}",
             f"- Published: {published}",
     ]
@@ -257,6 +311,17 @@ _LEGACY_KEYS = {
     "summary_model",
     "summary_generated_at",
     "tags",
+    "type",
+    "publisher",
+    "canonical_source",
+    "updated_at",
+    "keywords",
+    "topics",
+    "relevance_score",
+    "relevance_bucket",
+    "relevance_model",
+    "relevance_scored_at",
+    "relevance_reasons",
 }
 
 

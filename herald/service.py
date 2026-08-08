@@ -395,6 +395,11 @@ class HeraldService:
         if entry is None:
             raise KeyError(f"Entry {entry_id} does not exist")
         entry["keywords"] = self.database.list_entry_keywords(entry_id)
+        profile = self.database.get_relevance_profile(str(entry["content_kind"]))
+        if profile is not None:
+            entry["relevance"] = self.database.get_entry_ranking(
+                entry_id, int(profile["id"])
+            )
         if entry["content_kind"] == "paper":
             entry["identifiers"] = self.database.list_paper_identifiers(entry_id)
             entry["references"] = self.database.list_paper_references(entry_id)
