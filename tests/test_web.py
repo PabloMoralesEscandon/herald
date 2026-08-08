@@ -70,11 +70,14 @@ class WebTests(unittest.TestCase):
             html = response.read().decode()
         self.assertEqual(response.status, 200)
         self.assertIn("Herald", html)
-        self.assertIn("/static/app.js?v=16", html)
+        self.assertIn("/static/app.js?v=17", html)
         self.assertIn("/static/styles.css?v=16", html)
         self.assertIn('id="reader-pdf"', html)
         self.assertIn('id="reader-content" class="reader-content" hidden', html)
         self.assertNotIn('id="reader-placeholder"', html)
+        self.assertIn('class="nav-item active" data-status="unread"', html)
+        self.assertIn('<h1 id="inbox-title">Unread</h1>', html)
+        self.assertIn('id="clear-filters" class="text-button" type="button">Show unread', html)
 
         with urlopen(self.base_url + "/static/styles.css") as response:
             styles = response.read().decode()
@@ -94,6 +97,8 @@ class WebTests(unittest.TestCase):
         self.assertNotIn('addEventListener("pointerover"', script)
         self.assertNotIn("selectEntry(state.entries[0].id)", script)
         self.assertIn("Preview · double-click", script)
+        self.assertIn('status: "unread"', script)
+        self.assertIn('state.status = "unread"', script)
 
     def test_lists_and_filters_entries(self) -> None:
         status, entries = self.request("/api/entries?status=unread&category=Demo")

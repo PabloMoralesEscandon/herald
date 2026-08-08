@@ -7,7 +7,7 @@
     <meta name="theme-color" content="#f4f1e8">
     <title>Herald — Research inbox</title>
     <link rel="stylesheet" href="/static/styles.css?v=16">
-    <script src="/static/app.js?v=16" defer></script>
+    <script src="/static/app.js?v=17" defer></script>
   </head>
   <body>
     <div class="app-shell">
@@ -33,10 +33,10 @@
       <aside class="sidebar" aria-label="Inbox navigation">
         <p class="section-label">Library</p>
         <nav id="status-nav">
-          <button class="nav-item active" data-status="all" type="button">
+          <button class="nav-item" data-status="all" type="button">
             <span><span class="nav-icon">⌂</span>All entries</span><span class="count" data-count="all">0</span>
           </button>
-          <button class="nav-item" data-status="unread" type="button">
+          <button class="nav-item active" data-status="unread" type="button">
             <span><span class="nav-icon dot-icon"></span>Unread</span><span class="count" data-count="unread">0</span>
           </button>
           <button class="nav-item" data-status="kept" type="button">
@@ -62,7 +62,7 @@
           <div class="pane-heading">
             <div>
               <p class="eyebrow">Reading queue</p>
-              <h1 id="inbox-title">All entries</h1>
+              <h1 id="inbox-title">Unread</h1>
             </div>
             <div class="pane-actions">
               <label class="select-wrap">
@@ -83,7 +83,7 @@
             <span>∿</span>
             <h2>Nothing waiting here</h2>
             <p>Try another filter or clear your search.</p>
-            <button id="clear-filters" class="text-button" type="button">Show everything</button>
+            <button id="clear-filters" class="text-button" type="button">Show unread</button>
           </div>
         </section>
 

@@ -3,7 +3,7 @@
 const state = {
   entries: [],
   sources: [],
-  status: "all",
+  status: "unread",
   category: "all",
   search: "",
   selectedId: null,
@@ -324,12 +324,12 @@ function setCategory(category) {
 }
 
 function clearFilters() {
-  state.status = "all";
+  state.status = "unread";
   state.category = "all";
   state.search = "";
   elements.search.value = "";
   elements.categorySelect.value = "all";
-  elements.statusNav.querySelectorAll("[data-status]").forEach((button) => button.classList.toggle("active", button.dataset.status === "all"));
+  elements.statusNav.querySelectorAll("[data-status]").forEach((button) => button.classList.toggle("active", button.dataset.status === "unread"));
   elements.categoryNav.querySelectorAll("[data-category]").forEach((button) => button.classList.remove("active"));
   loadData();
 }
