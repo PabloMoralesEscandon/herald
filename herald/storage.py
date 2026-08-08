@@ -949,7 +949,7 @@ class Database:
         normalized_value = value.strip()
         if not normalized_scheme or not normalized_value:
             raise ValueError("Identifier scheme and value cannot be empty")
-        if normalized_scheme in {"doi", "arxiv"}:
+        if normalized_scheme in {"doi", "arxiv", "s2"}:
             normalized_value = normalized_value.lower()
         return normalized_scheme, normalized_value
 
@@ -977,6 +977,16 @@ class Database:
                     is_primary = MAX(is_primary, excluded.is_primary)
                 """,
                 (entry_id, scheme, value, int(is_primary), utc_now()),
+            )
+            connection.execute(
+                """
+                UPDATE paper_references
+                SET cited_entry_id = ?, updated_at = ?
+                WHERE cited_entry_id IS NULL
+                  AND external_scheme = ? AND external_id = ?
+                  AND citing_entry_id <> ?
+                """,
+                (entry_id, utc_now(), scheme, value, entry_id),
             )
             return cursor.rowcount == 1
 
@@ -1035,6 +1045,29 @@ class Database:
             )
         now = utc_now()
         with self.connect() as connection:
+            if cited_entry_id is None and external_scheme and external_id:
+                target = connection.execute(
+                    """
+                    SELECT entry_id FROM paper_identifiers
+                    WHERE scheme = ? AND value = ? AND entry_id <> ?
+                    """,
+                    (external_scheme, external_id, citing_entry_id),
+                ).fetchone()
+                if target is not None:
+                    cited_entry_id = int(target["entry_id"])
+            if cited_entry_id is None and cited_url.strip():
+                target = connection.execute(
+                    """
+                    SELECT id FROM entries
+                    WHERE id <> ? AND (url = ? OR canonical_url = ?)
+                    ORDER BY id LIMIT 1
+                    """,
+                    (citing_entry_id, cited_url.strip(), cited_url.strip()),
+                ).fetchone()
+                if target is not None:
+                    cited_entry_id = int(target["id"])
+            if cited_entry_id == citing_entry_id:
+                cited_entry_id = None
             connection.execute(
                 """
                 INSERT INTO paper_references(
@@ -1075,6 +1108,81 @@ class Database:
             ).fetchone()
             return int(row["id"])
 
+    def get_paper_reference(self, reference_id: int) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT paper_references.*,
+                       target.title AS target_title,
+                       target.canonical_url AS target_url,
+                       target.status AS cited_status,
+                       target.exported_path AS cited_exported_path
+                FROM paper_references
+                LEFT JOIN entries AS target
+                  ON target.id = paper_references.cited_entry_id
+                WHERE paper_references.id = ?
+                """,
+                (reference_id,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def reconcile_paper_references(self) -> int:
+        """Resolve external edges against identifiers and canonical URLs.
+
+        Resolution is deliberately directed: only ``cited_entry_id`` changes;
+        Herald never manufactures the reverse edge.
+        """
+        now = utc_now()
+        with self.connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE paper_references AS reference
+                SET cited_entry_id = (
+                        SELECT identifier.entry_id
+                        FROM paper_identifiers AS identifier
+                        WHERE identifier.scheme = reference.external_scheme
+                          AND identifier.value = reference.external_id
+                          AND identifier.entry_id <> reference.citing_entry_id
+                        LIMIT 1
+                    ),
+                    updated_at = ?
+                WHERE reference.cited_entry_id IS NULL
+                  AND reference.external_scheme <> ''
+                  AND reference.external_id <> ''
+                  AND EXISTS (
+                        SELECT 1 FROM paper_identifiers AS identifier
+                        WHERE identifier.scheme = reference.external_scheme
+                          AND identifier.value = reference.external_id
+                          AND identifier.entry_id <> reference.citing_entry_id
+                    )
+                """,
+                (now,),
+            )
+            resolved = cursor.rowcount
+            cursor = connection.execute(
+                """
+                UPDATE paper_references AS reference
+                SET cited_entry_id = (
+                        SELECT entry.id FROM entries AS entry
+                        WHERE entry.id <> reference.citing_entry_id
+                          AND (entry.url = reference.cited_url
+                               OR entry.canonical_url = reference.cited_url)
+                        ORDER BY entry.id LIMIT 1
+                    ),
+                    updated_at = ?
+                WHERE reference.cited_entry_id IS NULL
+                  AND reference.cited_url <> ''
+                  AND EXISTS (
+                        SELECT 1 FROM entries AS entry
+                        WHERE entry.id <> reference.citing_entry_id
+                          AND (entry.url = reference.cited_url
+                               OR entry.canonical_url = reference.cited_url)
+                    )
+                """,
+                (now,),
+            )
+            return resolved + cursor.rowcount
+
     def list_paper_references(self, entry_id: int) -> list[dict[str, Any]]:
         with self.connect() as connection:
             return [
@@ -1082,6 +1190,8 @@ class Database:
                 for row in connection.execute(
                     """
                     SELECT paper_references.*,
+                           entries.title AS target_title,
+                           entries.canonical_url AS target_url,
                            entries.status AS cited_status,
                            entries.exported_path AS cited_exported_path
                     FROM paper_references

@@ -8,6 +8,7 @@ All responses use JSON unless otherwise noted.
 - `GET /api/entries?kind=paper&bucket=relevant&limit=100&cursor=…`
 - `GET /api/stats` for full-database status and category counts
 - `GET /api/entries/{id}`
+- `GET /api/entries/{id}/references`
 - `POST /api/entries/{id}/action` with `{"action":"read|unread|keep|discard"}`
 - `POST /api/entries/{id}/summarize`
 - `POST /api/entries/{id}/obsidian/retry`
@@ -74,10 +75,23 @@ is created in the **Manual Imports** source with `unread` status. Repeating the
 same import returns the existing entry without changing its triage status.
 
 The response contains `entry`, `created`, `identifiers`, and `keywords`.
+It also contains the paper's directed outgoing `references`. Unresolved
+references retain their external identifier, title, and URL.
 Herald queries Semantic Scholar first, falls back to Crossref for DOI metadata,
 and caches successful provider responses locally. Arbitrary page fetches reject
 credentials, non-HTTPS/alternate-port URLs, private network destinations, and
 responses larger than 2 MiB.
+
+## Citation references
+
+- `GET /api/entries/{id}/references` lists only references cited by that paper.
+- `POST /api/references/{reference-id}/add` imports one selected cited paper.
+
+References reconcile idempotently by normalized DOI, arXiv ID, or Semantic
+Scholar ID when a matching paper reaches Herald. Add to Herald never crawls the
+cited paper's references into entries: a newly added target is `unread`, is not
+kept, and is not exported. Repeating Add returns the existing target without
+changing its status. Provider failures leave the reference unresolved.
 
 Errors have the shape `{"error":"human-readable message"}` and an appropriate
 HTTP status.

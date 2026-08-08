@@ -159,6 +159,13 @@ class PaperLocator:
 
 
 @dataclass(slots=True)
+class PaperReferenceMetadata:
+    title: str = ""
+    url: str = ""
+    identifiers: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
 class PaperMetadata:
     title: str = ""
     authors: list[str] = field(default_factory=list)
@@ -168,6 +175,7 @@ class PaperMetadata:
     identifiers: dict[str, str] = field(default_factory=dict)
     topics: list[str] = field(default_factory=list)
     supplied_keywords: list[str] = field(default_factory=list)
+    references: list[PaperReferenceMetadata] = field(default_factory=list)
     provider: str = ""
 
 
@@ -177,6 +185,7 @@ class PaperImportResult:
     created: bool
     identifiers: list[dict[str, Any]]
     keywords: list[dict[str, Any]]
+    references: list[dict[str, Any]]
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -184,6 +193,7 @@ class PaperImportResult:
             "created": self.created,
             "identifiers": self.identifiers,
             "keywords": self.keywords,
+            "references": self.references,
         }
 
 
@@ -496,13 +506,20 @@ class PaperImporter:
     def _semantic_scholar(self, locator: PaperLocator) -> PaperMetadata:
         prefix = {"doi": "DOI:", "arxiv": "ARXIV:", "s2": ""}[locator.scheme]
         paper_id = prefix + locator.value
-        fields = "paperId,externalIds,url,title,abstract,authors,publicationDate,year,fieldsOfStudy"
+        fields = (
+            "paperId,externalIds,url,title,abstract,authors,publicationDate,year,"
+            "fieldsOfStudy,references.paperId,references.externalIds,"
+            "references.url,references.title"
+        )
         url = f"{SEMANTIC_SCHOLAR_API}{quote(paper_id, safe='')}?fields={fields}"
-        payload = self._request_json("semantic-scholar", paper_id.lower(), url)
+        # Version the cache key because older Herald responses were requested
+        # without references and would otherwise suppress citation enrichment.
+        cache_key = f"{paper_id.lower()}:references-v1"
+        payload = self._request_json("semantic-scholar", cache_key, url)
         title = _clean_text(payload.get("title"))
         if not title:
             raise PaperNotFoundError("Semantic Scholar did not return paper metadata")
-        self.database.put_provider_cache("semantic-scholar", paper_id.lower(), payload)
+        self.database.put_provider_cache("semantic-scholar", cache_key, payload)
         identifiers: dict[str, str] = {}
         external = payload.get("externalIds")
         if isinstance(external, dict):
@@ -526,6 +543,7 @@ class PaperImporter:
         ] if isinstance(authors, list) else []
         topics = payload.get("fieldsOfStudy")
         topic_names = [_clean_text(item) for item in topics if _clean_text(item)] if isinstance(topics, list) else []
+        references = self._semantic_scholar_references(payload.get("references"))
         return PaperMetadata(
             title=title,
             authors=author_names,
@@ -534,8 +552,42 @@ class PaperImporter:
             url=_clean_text(payload.get("url")),
             identifiers=identifiers,
             topics=topic_names,
+            references=references,
             provider="semantic-scholar",
         )
+
+    @staticmethod
+    def _semantic_scholar_references(value: Any) -> list[PaperReferenceMetadata]:
+        results: list[PaperReferenceMetadata] = []
+        for raw in value if isinstance(value, list) else []:
+            if not isinstance(raw, dict):
+                continue
+            item = raw.get("citedPaper") if isinstance(raw.get("citedPaper"), dict) else raw
+            identifiers: dict[str, str] = {}
+            external = item.get("externalIds")
+            if isinstance(external, dict):
+                if external.get("DOI"):
+                    try:
+                        identifiers["doi"] = normalize_doi(str(external["DOI"]))
+                    except ValueError:
+                        pass
+                if external.get("ArXiv"):
+                    try:
+                        identifiers["arxiv"] = normalize_arxiv_id(str(external["ArXiv"]))
+                    except ValueError:
+                        pass
+            paper_id = str(item.get("paperId") or "").strip().lower()
+            if S2_ID_RE.fullmatch(paper_id):
+                identifiers["s2"] = paper_id
+            title = _clean_text(item.get("title"))
+            url = _clean_text(item.get("url"))
+            if not url and identifiers.get("doi"):
+                url = f"https://doi.org/{identifiers['doi']}"
+            elif not url and identifiers.get("arxiv"):
+                url = f"https://arxiv.org/abs/{identifiers['arxiv']}"
+            if identifiers or url:
+                results.append(PaperReferenceMetadata(title, url, identifiers))
+        return results
 
     def _crossref(self, doi: str) -> PaperMetadata:
         url = CROSSREF_API + quote(doi, safe="")
@@ -569,6 +621,27 @@ class PaperImporter:
                 except (TypeError, ValueError):
                     pass
         subjects = message.get("subject")
+        references: list[PaperReferenceMetadata] = []
+        raw_references = message.get("reference")
+        for raw_reference in raw_references if isinstance(raw_references, list) else []:
+            if not isinstance(raw_reference, dict):
+                continue
+            identifiers: dict[str, str] = {}
+            doi_value = raw_reference.get("DOI") or raw_reference.get("doi")
+            if doi_value:
+                try:
+                    identifiers["doi"] = normalize_doi(str(doi_value))
+                except ValueError:
+                    pass
+            title_value = _clean_text(
+                raw_reference.get("article-title") or raw_reference.get("volume-title")
+            )
+            if identifiers:
+                references.append(PaperReferenceMetadata(
+                    title=title_value,
+                    url=f"https://doi.org/{identifiers['doi']}",
+                    identifiers=identifiers,
+                ))
         return PaperMetadata(
             title=title,
             authors=authors,
@@ -578,6 +651,7 @@ class PaperImporter:
             identifiers={"doi": doi},
             topics=[_clean_text(item) for item in subjects if _clean_text(item)]
             if isinstance(subjects, list) else [],
+            references=references,
             provider="crossref",
         )
 
@@ -592,8 +666,21 @@ class PaperImporter:
             identifiers={**fallback.identifiers, **primary.identifiers},
             topics=list(dict.fromkeys(primary.topics + fallback.topics)),
             supplied_keywords=list(dict.fromkeys(primary.supplied_keywords + fallback.supplied_keywords)),
+            references=primary.references or fallback.references,
             provider=primary.provider,
         )
+
+    @staticmethod
+    def _reference_identity(
+        reference: PaperReferenceMetadata,
+    ) -> tuple[str, str, str]:
+        for scheme in ("doi", "arxiv", "s2"):
+            value = reference.identifiers.get(scheme, "").strip()
+            if value:
+                return f"{scheme}:{value}", scheme, value
+        if reference.url.strip():
+            return f"url:{reference.url.strip()}", "", ""
+        raise ValueError("A paper reference needs an identifier or URL")
 
     @staticmethod
     def _identity(metadata: PaperMetadata, original_locator: PaperLocator) -> tuple[str, str, str]:
@@ -674,6 +761,24 @@ class PaperImporter:
             self.database.add_paper_identifier(
                 entry_id, scheme, identifier, is_primary=scheme == primary_scheme
             )
+        for position, reference in enumerate(metadata.references, start=1):
+            try:
+                reference_key, external_scheme, external_id = self._reference_identity(
+                    reference
+                )
+            except ValueError:
+                continue
+            self.database.upsert_paper_reference(
+                entry_id,
+                reference_key,
+                external_scheme=external_scheme,
+                external_id=external_id,
+                cited_title=reference.title,
+                cited_url=reference.url,
+                position=position,
+                provider=metadata.provider,
+            )
+        self.database.reconcile_paper_references()
         keyword_rows: list[dict[str, Any]] = []
         existing_values: set[str] = set()
         for keyword in metadata.supplied_keywords:
@@ -709,4 +814,5 @@ class PaperImporter:
             created=created,
             identifiers=self.database.list_paper_identifiers(entry_id),
             keywords=self.database.list_entry_keywords(entry_id),
+            references=self.database.list_paper_references(entry_id),
         )

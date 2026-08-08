@@ -92,6 +92,10 @@ class HeraldRequestHandler(BaseHTTPRequestHandler):
         if entry_id is not None:
             self._get_entry(entry_id)
             return
+        entry_references = self._entry_subroute(parsed.path, "references")
+        if entry_references is not None:
+            self._get_references(entry_references)
+            return
         self._send_error(HTTPStatus.NOT_FOUND, "Not found")
 
     def do_PUT(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
@@ -133,6 +137,10 @@ class HeraldRequestHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/import/paper":
             self._import_paper()
+            return
+        reference_add = self._reference_subroute(path, "add")
+        if reference_add is not None:
+            self._add_reference(reference_add)
             return
         entry_action = self._entry_subroute(path, "action")
         if entry_action is not None:
@@ -214,6 +222,17 @@ class HeraldRequestHandler(BaseHTTPRequestHandler):
                 entry_id, int(profile["id"])
             )
         self._send_json(entry)
+
+    def _get_references(self, entry_id: int) -> None:
+        try:
+            references = self.server.service.list_paper_references(entry_id)
+        except KeyError:
+            self._send_error(HTTPStatus.NOT_FOUND, "Entry not found")
+            return
+        except ValueError as error:
+            self._send_error(HTTPStatus.BAD_REQUEST, str(error))
+            return
+        self._send_json({"entry_id": entry_id, "references": references})
 
     def _add_source(self) -> None:
         payload = self._read_json()
@@ -300,6 +319,27 @@ class HeraldRequestHandler(BaseHTTPRequestHandler):
             result.to_dict(),
             HTTPStatus.CREATED if result.created else HTTPStatus.OK,
         )
+
+    def _add_reference(self, reference_id: int) -> None:
+        try:
+            result = self.server.service.add_paper_reference(reference_id)
+        except KeyError:
+            self._send_error(HTTPStatus.NOT_FOUND, "Reference not found")
+            return
+        except (ValueError, UnsafePaperUrlError) as error:
+            self._send_error(HTTPStatus.BAD_REQUEST, str(error))
+            return
+        except PaperNotFoundError as error:
+            self._send_error(HTTPStatus.NOT_FOUND, str(error))
+            return
+        except PaperFetchError as error:
+            self._send_error(HTTPStatus.BAD_GATEWAY, str(error))
+            return
+        except PaperImportError as error:
+            self._send_error(HTTPStatus.UNPROCESSABLE_ENTITY, str(error))
+            return
+        status = HTTPStatus.CREATED if result["import"]["created"] else HTTPStatus.OK
+        self._send_json(result, status)
 
     def _summarize(self, entry_id: int) -> None:
         try:
@@ -435,6 +475,18 @@ class HeraldRequestHandler(BaseHTTPRequestHandler):
         if len(parts) != 5 or parts[:2] != ["api", "entries"]:
             return None
         if parts[3:] != [parent, subroute]:
+            return None
+        try:
+            return int(unquote(parts[2]))
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _reference_subroute(path: str, subroute: str) -> int | None:
+        parts = path.strip("/").split("/")
+        if len(parts) != 4 or parts[:2] != ["api", "references"]:
+            return None
+        if parts[3] != subroute:
             return None
         try:
             return int(unquote(parts[2]))

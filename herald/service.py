@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 
 from .feeds import FeedParseError, parse_feed
 from .obsidian import ObsidianConflictError, ObsidianExporter
-from .papers import PaperImporter, PaperImportResult
+from .papers import PaperImporter, PaperImportError, PaperImportResult
 from .relevance import RelevanceCoordinator, RelevanceEngine
 from .sources import CURATED_SOURCES
 from .storage import Database
@@ -457,3 +457,65 @@ class HeraldService:
 
     def import_paper(self, value: str) -> PaperImportResult:
         return self.paper_importer.import_paper(value)
+
+    def list_paper_references(self, entry_id: int) -> list[dict[str, object]]:
+        entry = self.database.get_entry(entry_id)
+        if entry is None:
+            raise KeyError(f"Entry {entry_id} does not exist")
+        if entry["content_kind"] != "paper":
+            raise ValueError("Only papers have citation references")
+        return self.database.list_paper_references(entry_id)
+
+    def add_paper_reference(self, reference_id: int) -> dict[str, object]:
+        """Import exactly one user-selected reference without changing triage."""
+        reference = self.database.get_paper_reference(reference_id)
+        if reference is None:
+            raise KeyError(f"Reference {reference_id} does not exist")
+
+        cited_entry_id = reference.get("cited_entry_id")
+        if cited_entry_id is not None:
+            entry = self.database.get_entry(int(cited_entry_id))
+            assert entry is not None
+            return {
+                "reference": reference,
+                "import": {
+                    "entry": entry,
+                    "created": False,
+                    "identifiers": self.database.list_paper_identifiers(int(cited_entry_id)),
+                    "keywords": self.database.list_entry_keywords(int(cited_entry_id)),
+                    "references": self.database.list_paper_references(int(cited_entry_id)),
+                },
+            }
+
+        scheme = str(reference.get("external_scheme") or "")
+        identifier = str(reference.get("external_id") or "")
+        if scheme == "doi":
+            locator = f"doi:{identifier}"
+        elif scheme == "arxiv":
+            locator = f"arXiv:{identifier}"
+        elif scheme == "s2":
+            locator = f"https://www.semanticscholar.org/paper/{identifier}"
+        else:
+            locator = str(reference.get("cited_url") or "")
+        if not locator:
+            raise PaperImportError(
+                "This reference has no DOI, arXiv ID, Semantic Scholar ID, or paper URL"
+            )
+
+        result = self.import_paper(locator)
+        # The selected edge is authoritative even when its provider URL redirects
+        # to a different canonical identifier during import.
+        self.database.upsert_paper_reference(
+            int(reference["citing_entry_id"]),
+            str(reference["reference_key"]),
+            cited_entry_id=int(result.entry["id"]),
+            external_scheme=scheme,
+            external_id=identifier,
+            cited_title=str(reference.get("cited_title") or ""),
+            cited_url=str(reference.get("cited_url") or ""),
+            position=reference.get("position"),
+            provider=str(reference.get("provider") or ""),
+        )
+        updated_reference = self.database.get_paper_reference(reference_id)
+        assert updated_reference is not None
+        return {"reference": updated_reference, "import": result.to_dict()}
