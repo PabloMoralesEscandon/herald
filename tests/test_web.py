@@ -71,8 +71,8 @@ class WebTests(unittest.TestCase):
             html = response.read().decode()
         self.assertEqual(response.status, 200)
         self.assertIn("Herald", html)
-        self.assertIn("/static/app.js?v=18", html)
-        self.assertIn("/static/styles.css?v=16", html)
+        self.assertIn("/static/app.js?v=21", html)
+        self.assertIn("/static/styles.css?v=19", html)
         self.assertIn('id="reader-pdf"', html)
         self.assertIn('id="reader-content" class="reader-content" hidden', html)
         self.assertNotIn('id="reader-placeholder"', html)
@@ -80,6 +80,13 @@ class WebTests(unittest.TestCase):
         self.assertLess(html.index('data-status="unread"'), html.index('data-status="all"'))
         self.assertIn('<h1 id="inbox-title">Unread</h1>', html)
         self.assertIn('id="clear-filters" class="text-button" type="button">Show unread', html)
+        self.assertIn('id="relevance-nav"', html)
+        self.assertIn('data-bucket="relevant"', html)
+        self.assertIn('data-bucket="filtered"', html)
+        self.assertIn('id="profile-dialog"', html)
+        self.assertIn('id="import-dialog"', html)
+        self.assertIn('id="references-section"', html)
+        self.assertIn('id="load-more"', html)
 
         with urlopen(self.base_url + "/static/styles.css") as response:
             styles = response.read().decode()
@@ -101,6 +108,46 @@ class WebTests(unittest.TestCase):
         self.assertIn("Preview · double-click", script)
         self.assertIn('status: "unread"', script)
         self.assertIn('state.status = "unread"', script)
+        self.assertIn('kind: "paper"', script)
+        self.assertIn('params.set("cursor", cursor)', script)
+        self.assertIn('api("/api/profiles/paper"', script)
+        self.assertIn('api("/api/import/paper"', script)
+        self.assertIn('/api/references/${button.dataset.addReference}/add', script)
+        self.assertIn('/obsidian/retry', script)
+        self.assertIn('relevanceReasons(ranking).slice(0, 3)', script)
+
+    def test_paper_ui_uses_paginated_ranked_api_contract(self) -> None:
+        self.server.service.relevance.engine.rescore("paper")
+
+        status, stats = self.request("/api/stats")
+        self.assertEqual(status, 200)
+        selected_bucket = (
+            "relevant" if stats["relevance"]["paper"]["relevant"] else "filtered"
+        )
+        status, page = self.request(
+            f"/api/entries?kind=paper&bucket={selected_bucket}&limit=1"
+        )
+
+        self.assertEqual(status, 200)
+        self.assertIn("entries", page)
+        self.assertIn("next_cursor", page)
+        self.assertEqual(len(page["entries"]), 1)
+        ranked = page["entries"][0]
+        self.assertIn("relevance_score", ranked)
+        self.assertIn("relevance_explanation", ranked)
+        self.assertIn("relevance_model", ranked)
+
+        status, detail = self.request(f"/api/entries/{ranked['id']}")
+        self.assertEqual(status, 200)
+        self.assertIn("relevance", detail)
+        self.assertIn("obsidian_export", detail)
+
+        status, references = self.request(
+            f"/api/entries/{ranked['id']}/references"
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(references["entry_id"], ranked["id"])
+        self.assertEqual(references["references"], [])
 
     def test_lists_and_filters_entries(self) -> None:
         status, entries = self.request("/api/entries?status=unread&category=Demo")

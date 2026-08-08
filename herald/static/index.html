@@ -6,8 +6,8 @@
     <meta name="color-scheme" content="light">
     <meta name="theme-color" content="#f4f1e8">
     <title>Herald — Research inbox</title>
-    <link rel="stylesheet" href="/static/styles.css?v=16">
-    <script src="/static/app.js?v=18" defer></script>
+    <link rel="stylesheet" href="/static/styles.css?v=19">
+    <script src="/static/app.js?v=21" defer></script>
   </head>
   <body>
     <div class="app-shell">
@@ -31,6 +31,15 @@
       </header>
 
       <aside class="sidebar" aria-label="Inbox navigation">
+        <p class="section-label">For you</p>
+        <nav id="relevance-nav">
+          <button class="nav-item" data-bucket="relevant" type="button">
+            <span><span class="nav-icon">✦</span>Relevant</span><span class="count" data-count="relevant">0</span>
+          </button>
+          <button class="nav-item" data-bucket="filtered" type="button">
+            <span><span class="nav-icon">≋</span>Filtered</span><span class="count" data-count="filtered">0</span>
+          </button>
+        </nav>
         <p class="section-label">Library</p>
         <nav id="status-nav">
           <button class="nav-item active" data-status="unread" type="button">
@@ -65,6 +74,8 @@
               <h1 id="inbox-title">Unread</h1>
             </div>
             <div class="pane-actions">
+              <button class="quiet-button" id="profile-button" type="button" title="Tune paper relevance">Tune filter</button>
+              <button class="primary-button" id="import-button" type="button">+ Add paper</button>
               <label class="select-wrap">
                 <span class="sr-only">Filter category</span>
                 <select id="category-select"><option value="all">All topics</option></select>
@@ -74,7 +85,8 @@
               </button>
             </div>
           </div>
-          <div class="inbox-meta"><span id="result-count">Loading…</span><span>Newest first</span></div>
+          <div class="inbox-meta"><span id="result-count">Loading…</span><span id="sort-label">Newest first</span></div>
+          <div id="ranking-banner" class="ranking-banner" hidden></div>
           <div id="entry-list" class="entry-list" aria-live="polite">
             <div class="loading-card"></div>
             <div class="loading-card short"></div>
@@ -84,6 +96,9 @@
             <h2>Nothing waiting here</h2>
             <p>Try another filter or clear your search.</p>
             <button id="clear-filters" class="text-button" type="button">Show unread</button>
+          </div>
+          <div class="pagination" id="pagination" hidden>
+            <button id="load-more" class="quiet-button load-more" type="button">Load more</button>
           </div>
         </section>
 
@@ -115,6 +130,20 @@
                 <div><dt>Feed</dt><dd id="reader-fact-source"></dd></div>
                 <div><dt>Double-click opens</dt><dd id="reader-fact-destination"></dd></div>
               </dl>
+              <section id="reader-relevance-section" class="detail-panel relevance-panel" hidden>
+                <div class="detail-heading">
+                  <div><p class="section-label">Relevance</p><strong id="reader-score"></strong></div>
+                  <span id="reader-ranking-provenance" class="metadata-state"></span>
+                </div>
+                <ul id="reader-reasons" class="reason-list"></ul>
+              </section>
+              <section class="detail-panel metadata-panel" aria-labelledby="metadata-heading">
+                <div class="detail-heading">
+                  <div><p class="section-label" id="metadata-heading">Research metadata</p><strong id="reader-enrichment"></strong></div>
+                  <span id="reader-obsidian-state" class="metadata-state"></span>
+                </div>
+                <p id="reader-enrichment-error" class="detail-error" hidden></p>
+              </section>
               <section class="summary-card" aria-labelledby="summary-heading">
                 <div class="summary-heading">
                   <div><span class="spark">✦</span><h3 id="summary-heading">Herald summary</h3></div>
@@ -127,6 +156,12 @@
                 <p class="section-label" id="original-heading">Full feed abstract</p>
                 <p id="reader-excerpt"></p>
               </section>
+              <section id="references-section" class="references-section" aria-labelledby="references-heading" hidden>
+                <div class="detail-heading">
+                  <div><p class="section-label" id="references-heading">References</p><strong id="reference-count"></strong></div>
+                </div>
+                <div id="reference-list" class="reference-list"></div>
+              </section>
               <div class="reader-final-actions">
                 <a id="reader-pdf" class="open-link pdf-link" target="_blank" rel="noopener noreferrer" hidden>Open PDF <span>↗</span></a>
                 <a id="reader-link" class="open-link" target="_blank" rel="noopener noreferrer">Read original <span>↗</span></a>
@@ -137,6 +172,62 @@
         </article>
       </main>
     </div>
+
+    <dialog id="profile-dialog" class="modal">
+      <form id="profile-form" class="modal-card">
+        <header class="modal-header">
+          <div><p class="eyebrow">Paper relevance</p><h2>Tune what reaches you</h2></div>
+          <button class="modal-close" type="button" data-close-dialog="profile-dialog" aria-label="Close">×</button>
+        </header>
+        <p class="modal-intro">One phrase per line. Herald ranks locally and keeps everything below the threshold in Filtered.</p>
+        <label class="field-label">Interests <span>required</span>
+          <textarea id="profile-interests" rows="5" required></textarea>
+        </label>
+        <label class="field-label">Exclusions
+          <textarea id="profile-exclusions" rows="3" placeholder="Topics you would rather avoid"></textarea>
+        </label>
+        <div class="field-grid">
+          <label class="field-label">Always include phrases
+            <textarea id="profile-includes" rows="3"></textarea>
+          </label>
+          <label class="field-label">Never show phrases
+            <textarea id="profile-never" rows="3"></textarea>
+          </label>
+        </div>
+        <div class="selectivity-field">
+          <label for="selectivity-slider">Selectivity</label>
+          <input id="selectivity-slider" type="range" min="0" max="2" step="1" value="1">
+          <div class="selectivity-labels" aria-hidden="true">
+            <span><strong>Broad</strong><small>More exploration</small></span>
+            <span><strong>Balanced</strong><small>Strongest ~10%</small></span>
+            <span><strong>Focused</strong><small>Exceptional matches</small></span>
+          </div>
+        </div>
+        <div class="profile-status"><span>Current threshold</span><strong id="profile-threshold">Not scored</strong><span id="profile-job-state"></span></div>
+        <footer class="modal-actions">
+          <button id="rescore-button" class="quiet-button" type="button">Rescore now</button>
+          <button id="save-profile" class="primary-button" type="submit">Save and rescore</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <dialog id="import-dialog" class="modal compact-modal">
+      <form id="import-form" class="modal-card">
+        <header class="modal-header">
+          <div><p class="eyebrow">Manual import</p><h2>Add a paper</h2></div>
+          <button class="modal-close" type="button" data-close-dialog="import-dialog" aria-label="Close">×</button>
+        </header>
+        <p class="modal-intro">Paste a DOI, arXiv ID, Semantic Scholar link, or public paper URL. Herald imports only this paper.</p>
+        <label class="field-label">Paper identifier or URL
+          <input id="paper-input" type="text" required placeholder="10.1145/… or https://arxiv.org/abs/…" autocomplete="off">
+        </label>
+        <p id="import-result" class="form-result" hidden></p>
+        <footer class="modal-actions">
+          <button class="quiet-button" type="button" data-close-dialog="import-dialog">Cancel</button>
+          <button id="submit-import" class="primary-button" type="submit">Add to Herald</button>
+        </footer>
+      </form>
+    </dialog>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
   </body>
 </html>
