@@ -222,9 +222,19 @@ function renderReader() {
   keepButton.classList.toggle("active", entry.status === "kept");
   discardButton.classList.toggle("active", entry.status === "discarded");
   const exportButton = document.querySelector("#export-action");
+  const exportState = entry.obsidian_export?.state || (entry.exported_path ? "synced" : null);
   exportButton.disabled = entry.status !== "kept";
-  exportButton.title = entry.status === "kept" ? "Write this note to your vault" : "Keep the entry before exporting";
-  exportButton.dataset.exported = entry.exported_path ? "true" : "false";
+  exportButton.textContent = entry.status !== "kept"
+    ? "Keep to save in Obsidian"
+    : exportState === "synced"
+      ? "Synced to Obsidian"
+      : exportState === "conflict"
+        ? "Resolve or retry Obsidian"
+        : "Retry Obsidian sync";
+  exportButton.title = entry.status === "kept"
+    ? (entry.obsidian_export?.error || "Reconcile this note with your vault")
+    : "Keeping an entry saves it to Obsidian automatically";
+  exportButton.dataset.exported = exportState === "synced" ? "true" : "false";
 }
 
 async function refreshFeeds() {
@@ -271,10 +281,10 @@ async function exportSelected() {
   const button = document.querySelector("#export-action");
   button.disabled = true;
   try {
-    const result = await api(`/api/entries/${entry.id}/export`, { method: "POST", body: "{}" });
+    const result = await api(`/api/entries/${entry.id}/obsidian/retry`, { method: "POST", body: "{}" });
     state.entries = state.entries.map((item) => item.id === result.entry.id ? result.entry : item);
     renderReader();
-    showToast(`Exported to ${result.entry.exported_path}`);
+    showToast(`Synced to ${result.entry.exported_path}`);
   } catch (error) {
     showToast(error.message, true);
   } finally {
@@ -291,7 +301,15 @@ async function actOnSelected(action) {
     renderCounts();
     renderList();
     renderReader();
-    showToast(action === "keep" ? "Saved to your kept reading" : action === "discard" ? "Moved to discarded" : action === "read" ? "Marked as read" : "Returned to unread");
+    const syncState = updated.obsidian_export?.state;
+    const message = action === "keep"
+      ? (syncState === "synced" ? "Kept and synced to Obsidian" : "Kept; Obsidian sync needs attention")
+      : action === "discard"
+        ? "Moved to discarded"
+        : action === "read"
+          ? "Marked as read"
+          : "Returned to unread";
+    showToast(message, action === "keep" && !["synced", "pending"].includes(syncState));
   } catch (error) { showToast(error.message, true); }
 }
 

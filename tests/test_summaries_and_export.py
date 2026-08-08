@@ -7,7 +7,7 @@ from json import loads
 from pathlib import Path
 from unittest.mock import patch
 
-from herald.obsidian import ObsidianExporter
+from herald.obsidian import ObsidianConflictError, ObsidianExporter
 from herald.service import HeraldService
 from herald.storage import Database
 from herald.summaries import (
@@ -194,6 +194,240 @@ class ExportTests(unittest.TestCase):
         self.database.set_status(self.entry_id, "kept")
         paths = self.service.export_kept()
         self.assertEqual(len(paths), 1)
+
+    def test_keep_automatically_exports_and_reports_sync_state(self) -> None:
+        entry = self.service.change_status(self.entry_id, "kept")
+
+        self.assertEqual(entry["status"], "kept")
+        self.assertEqual(entry["obsidian_export"]["state"], "synced")
+        self.assertTrue((self.vault / entry["exported_path"]).is_file())
+        self.assertEqual(
+            entry["exported_path"], f"Herald/Papers/herald-{self.entry_id:06d}.md"
+        )
+
+    def test_news_uses_a_publisher_specific_stable_path(self) -> None:
+        source_id = self.database.add_source(
+            "Vendor: News",
+            "https://example.org/news.xml",
+            "Announcements",
+            content_kind="news",
+        )
+        news_id, _ = self.database.upsert_entry(
+            source_id=source_id,
+            guid="launch",
+            url="https://example.org/launch",
+            title="Product launch",
+        )
+
+        entry = self.service.change_status(news_id, "kept")
+
+        self.assertEqual(
+            entry["exported_path"],
+            f"Herald/News/Vendor News/herald-{news_id:06d}.md",
+        )
+        self.assertTrue((self.vault / entry["exported_path"]).is_file())
+
+    def test_keep_succeeds_when_export_fails(self) -> None:
+        invalid_vault = self.vault.parent / "not-a-directory"
+        invalid_vault.write_text("occupied", encoding="utf-8")
+        service = HeraldService(
+            self.database,
+            exporter=ObsidianExporter(invalid_vault),
+        )
+
+        entry = service.change_status(self.entry_id, "kept")
+
+        self.assertEqual(entry["status"], "kept")
+        self.assertEqual(entry["obsidian_export"]["state"], "failed")
+        self.assertTrue(entry["obsidian_export"]["error"])
+
+    def test_reexport_preserves_custom_frontmatter_and_notes(self) -> None:
+        self.service.change_status(self.entry_id, "kept")
+        path = self.vault / self.database.get_entry(self.entry_id)["exported_path"]
+        document = path.read_text(encoding="utf-8")
+        document = document.replace(
+            "# herald:managed:end\n---",
+            "# herald:managed:end\nmy_rating: 5\n---",
+        ).replace("## My Notes\n\n", "## My Notes\n\nExact **annotation**.\n")
+        path.write_text(document, encoding="utf-8")
+        self.database.set_summary(
+            self.entry_id, "A newer summary.", provider="test", model="new-model"
+        )
+
+        self.service.export_entry(self.entry_id)
+        updated = path.read_text(encoding="utf-8")
+
+        self.assertIn("my_rating: 5", updated)
+        self.assertIn("Exact **annotation**.", updated)
+        self.assertIn("A newer summary.", updated)
+        self.assertEqual(updated.count("my_rating: 5"), 1)
+        self.assertEqual(updated.count("Exact **annotation**."), 1)
+
+    def test_summary_update_resynchronizes_a_kept_note(self) -> None:
+        kept = self.service.change_status(self.entry_id, "kept")
+        path = self.vault / kept["exported_path"]
+
+        self.service.summarize_entry(self.entry_id)
+
+        self.assertIn("Summary of A:", path.read_text(encoding="utf-8"))
+
+    def test_atomic_failure_leaves_existing_note_unchanged(self) -> None:
+        kept = self.service.change_status(self.entry_id, "kept")
+        path = self.vault / kept["exported_path"]
+        original = path.read_bytes()
+        self.database.set_summary(
+            self.entry_id, "A replacement that must not be partial.", provider="test"
+        )
+
+        with patch("herald.obsidian.os.replace", side_effect=OSError("disk full")):
+            with self.assertRaisesRegex(OSError, "disk full"):
+                self.service.export_entry(self.entry_id)
+
+        self.assertEqual(path.read_bytes(), original)
+        self.assertEqual(
+            self.database.get_obsidian_export(self.entry_id)["state"], "failed"
+        )
+
+    def test_malformed_managed_note_is_a_non_destructive_conflict(self) -> None:
+        self.service.change_status(self.entry_id, "kept")
+        path = self.vault / self.database.get_entry(self.entry_id)["exported_path"]
+        damaged = path.read_text(encoding="utf-8").replace(
+            "<!-- herald:managed:end -->", ""
+        )
+        path.write_text(damaged, encoding="utf-8")
+
+        with self.assertRaises(ObsidianConflictError):
+            self.service.export_entry(self.entry_id)
+
+        self.assertEqual(path.read_text(encoding="utf-8"), damaged)
+        self.assertEqual(
+            self.database.get_obsidian_export(self.entry_id)["state"], "conflict"
+        )
+
+    def test_unkeep_archives_and_rekeep_restores_annotations(self) -> None:
+        kept = self.service.change_status(self.entry_id, "kept")
+        path = self.vault / kept["exported_path"]
+        path.write_text(
+            path.read_text(encoding="utf-8") + "Permanent annotation.\n",
+            encoding="utf-8",
+        )
+
+        read = self.service.change_status(self.entry_id, "read")
+
+        self.assertEqual(read["status"], "read")
+        self.assertEqual(read["obsidian_export"]["state"], "archived")
+        self.assertIsNone(read["exported_path"])
+        self.assertFalse(path.exists())
+        archive = self.database.list_obsidian_archives(self.entry_id)[0]
+        archived_path = self.service.exporter.archive_root / archive["archive_path"]
+        self.assertTrue(archived_path.is_file())
+        self.assertFalse(archived_path.is_relative_to(self.vault))
+
+        restored = self.service.change_status(self.entry_id, "kept")
+        restored_path = self.vault / restored["exported_path"]
+        self.assertIn(
+            "Permanent annotation.", restored_path.read_text(encoding="utf-8")
+        )
+        self.assertEqual(restored["obsidian_export"]["state"], "synced")
+        self.assertIsNotNone(
+            self.database.list_obsidian_archives(self.entry_id)[0]["restored_at"]
+        )
+
+    def test_stable_path_does_not_change_when_title_changes(self) -> None:
+        self.service.change_status(self.entry_id, "kept")
+        first = self.database.get_entry(self.entry_id)["exported_path"]
+        with self.database.connect() as connection:
+            connection.execute(
+                "UPDATE entries SET title = ? WHERE id = ?",
+                ("A completely different title", self.entry_id),
+            )
+
+        self.service.export_entry(self.entry_id)
+
+        self.assertEqual(self.database.get_entry(self.entry_id)["exported_path"], first)
+        self.assertIn(
+            "# A completely different title",
+            (self.vault / first).read_text(encoding="utf-8"),
+        )
+
+    def test_stable_path_does_not_change_when_identity_is_enriched_later(self) -> None:
+        self.service.change_status(self.entry_id, "kept")
+        first = self.database.get_entry(self.entry_id)["exported_path"]
+        self.database.set_enrichment_state(
+            self.entry_id,
+            "enriched",
+            provider="semantic-scholar",
+            canonical_key="doi-10.1000/example",
+        )
+
+        self.service.export_entry(self.entry_id)
+
+        self.assertEqual(self.database.get_entry(self.entry_id)["exported_path"], first)
+        self.assertTrue((self.vault / first).is_file())
+
+    def test_legacy_note_moves_to_stable_path_and_preserves_user_fields(self) -> None:
+        self.database.set_status(self.entry_id, "kept")
+        legacy_relative = "Herald/Old/legacy-note.md"
+        legacy = self.vault / legacy_relative
+        legacy.parent.mkdir(parents=True)
+        legacy.write_text(
+            "---\n"
+            f"herald_id: {self.entry_id}\n"
+            "title: \"Old generated title\"\n"
+            "tags:\n  - \"herald\"\n"
+            "my_rating: 4\n"
+            "---\n\n"
+            "# Old generated title\n\n## Article text\n\nOld text\n\n"
+            "## Source\n\n- Original: unavailable\n\n"
+            "## Notes\n\nLegacy annotation.\n",
+            encoding="utf-8",
+        )
+        self.database.upsert_obsidian_export(
+            self.entry_id,
+            state="synced",
+            vault_path=str(self.vault),
+            relative_path=legacy_relative,
+        )
+
+        stable = self.service.export_entry(self.entry_id)
+        document = stable.read_text(encoding="utf-8")
+
+        self.assertFalse(legacy.exists())
+        self.assertEqual(stable.name, f"herald-{self.entry_id:06d}.md")
+        self.assertIn("my_rating: 4", document)
+        self.assertIn("Legacy annotation.", document)
+        self.assertIn("# herald:managed:start", document)
+
+    def test_symlink_escape_is_rejected_without_writing_outside(self) -> None:
+        outside = self.vault.parent / "outside"
+        outside.mkdir()
+        self.vault.mkdir()
+        (self.vault / "Herald").symlink_to(outside, target_is_directory=True)
+
+        entry = self.service.change_status(self.entry_id, "kept")
+
+        self.assertEqual(entry["status"], "kept")
+        self.assertEqual(entry["obsidian_export"]["state"], "failed")
+        self.assertEqual(list(outside.rglob("*.md")), [])
+
+    def test_changing_vault_preserves_annotations(self) -> None:
+        kept = self.service.change_status(self.entry_id, "kept")
+        old_path = self.vault / kept["exported_path"]
+        old_path.write_text(
+            old_path.read_text(encoding="utf-8") + "Move this annotation.\n",
+            encoding="utf-8",
+        )
+        new_vault = self.vault.parent / "Existing Vault"
+        new_vault.mkdir()
+
+        settings = self.service.configure_obsidian(str(new_vault))
+
+        entry = self.service.entry_with_obsidian_state(self.entry_id)
+        new_path = new_vault / entry["exported_path"]
+        self.assertEqual(settings["vault_path"], str(new_vault.resolve()))
+        self.assertFalse(old_path.exists())
+        self.assertIn("Move this annotation.", new_path.read_text(encoding="utf-8"))
+        self.assertEqual(entry["obsidian_export"]["state"], "synced")
 
 
 if __name__ == "__main__":

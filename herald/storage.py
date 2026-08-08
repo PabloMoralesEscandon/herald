@@ -1497,9 +1497,9 @@ class Database:
         entry_id: int,
         *,
         state: str,
-        vault_path: str = "",
-        relative_path: str = "",
-        content_hash: str = "",
+        vault_path: str | None = None,
+        relative_path: str | None = None,
+        content_hash: str | None = None,
         error: str = "",
     ) -> dict[str, Any]:
         if state not in VALID_EXPORT_STATES:
@@ -1513,26 +1513,36 @@ class Database:
                     error, synced_at, updated_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(entry_id) DO UPDATE SET
-                    vault_path = excluded.vault_path,
-                    relative_path = excluded.relative_path,
+                    vault_path = COALESCE(?, obsidian_exports.vault_path),
+                    relative_path = COALESCE(?, obsidian_exports.relative_path),
                     state = excluded.state,
-                    content_hash = excluded.content_hash,
+                    content_hash = COALESCE(?, obsidian_exports.content_hash),
                     error = excluded.error,
-                    synced_at = excluded.synced_at,
+                    synced_at = CASE
+                        WHEN excluded.state = 'synced' THEN excluded.synced_at
+                        ELSE obsidian_exports.synced_at
+                    END,
                     updated_at = excluded.updated_at
                 """,
                 (
                     entry_id,
-                    vault_path,
-                    relative_path,
+                    vault_path or "",
+                    relative_path or "",
                     state,
-                    content_hash,
+                    content_hash or "",
                     error,
                     now if state == "synced" else None,
                     now,
+                    vault_path,
+                    relative_path,
+                    content_hash,
                 ),
             )
-            if relative_path:
+            if state in {"archived", "archive_pending"}:
+                connection.execute(
+                    "UPDATE entries SET exported_path = NULL WHERE id = ?", (entry_id,)
+                )
+            elif relative_path:
                 connection.execute(
                     "UPDATE entries SET exported_path = ? WHERE id = ?",
                     (relative_path, entry_id),
@@ -1548,6 +1558,15 @@ class Database:
                 "SELECT * FROM obsidian_exports WHERE entry_id = ?", (entry_id,)
             ).fetchone()
             return dict(row) if row else None
+
+    def list_obsidian_exports(self) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            return [
+                dict(row)
+                for row in connection.execute(
+                    "SELECT * FROM obsidian_exports ORDER BY entry_id"
+                )
+            ]
 
     def add_obsidian_archive(
         self,
@@ -1579,3 +1598,14 @@ class Database:
                     (entry_id,),
                 )
             ]
+
+    def mark_obsidian_archive_restored(self, archive_id: int) -> bool:
+        with self.connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE obsidian_archives SET restored_at = ?
+                WHERE id = ? AND restored_at IS NULL
+                """,
+                (utc_now(), archive_id),
+            )
+            return cursor.rowcount == 1

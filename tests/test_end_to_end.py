@@ -139,6 +139,8 @@ class EndToEndWorkflowTests(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertEqual(kept["status"], "kept")
+        self.assertEqual(kept["obsidian_export"]["state"], "synced")
+        self.assertTrue((self.data_dir / "vault" / kept["exported_path"]).is_file())
 
         status, exported = self._request(
             f"/api/entries/{entry_id}/export", method="POST", payload={}
@@ -147,11 +149,11 @@ class EndToEndWorkflowTests(unittest.TestCase):
         markdown_path = Path(exported["path"])
         self.assertTrue(markdown_path.is_relative_to(self.data_dir / "vault"))
         document = markdown_path.read_text(encoding="utf-8")
-        self.assertIn("---\nherald_id:", document)
+        self.assertIn("---\n# herald:managed:start\nherald_id:", document)
         self.assertIn("> [!abstract] Summary", document)
         self.assertIn("## Article text", document)
         self.assertIn("## Source", document)
-        self.assertIn("## Notes", document)
+        self.assertIn("## My Notes", document)
         self.assertIn("status: \"kept\"", document)
         self.assertEqual(
             exported["entry"]["exported_path"],
