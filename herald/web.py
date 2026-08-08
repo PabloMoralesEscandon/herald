@@ -247,11 +247,23 @@ class HeraldRequestHandler(BaseHTTPRequestHandler):
                 "title, url, and category are required",
             )
             return
+        content_kind = self._required_text(payload, "content_kind") or "paper"
+        if content_kind not in {"paper", "news"}:
+            self._send_error(
+                HTTPStatus.BAD_REQUEST,
+                "content_kind must be paper or news",
+            )
+            return
         parsed_url = urlparse(url)
         if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
             self._send_error(HTTPStatus.BAD_REQUEST, "url must be an HTTP(S) URL")
             return
-        source_id = self.server.database.add_source(title, url, category)
+        source_id = self.server.service.add_source(
+            title,
+            url,
+            category,
+            content_kind=content_kind,
+        )
         source = next(
             source
             for source in self.server.database.list_sources()
@@ -280,9 +292,8 @@ class HeraldRequestHandler(BaseHTTPRequestHandler):
 
     def _refresh(self) -> None:
         results = self.server.service.refresh_all()
-        if any(result.created for result in results):
-            for kind in ("paper", "news"):
-                self.server.service.relevance.start(kind)
+        if any(result.created and result.content_kind == "paper" for result in results):
+            self.server.service.relevance.start("paper")
         payload = [result.to_dict() for result in results]
         self._send_json(
             {

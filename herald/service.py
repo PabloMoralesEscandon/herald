@@ -4,11 +4,17 @@ import http.client
 import urllib.error
 import urllib.request
 from dataclasses import asdict, dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Callable
 from urllib.parse import urlsplit
 
-from .feeds import FeedParseError, parse_feed
+from .feeds import (
+    FeedParseError,
+    canonicalize_url,
+    discover_feed_url,
+    parse_feed,
+)
 from .obsidian import ObsidianConflictError, ObsidianExporter
 from .papers import PaperImporter, PaperImportError, PaperImportResult
 from .relevance import RelevanceCoordinator, RelevanceEngine
@@ -22,27 +28,60 @@ from .summaries import (
 )
 
 
-Fetcher = Callable[[str], bytes]
-
-
 class FeedFetchError(RuntimeError):
     """Raised when a remote feed cannot be retrieved."""
 
 
-def fetch_feed(url: str, *, timeout: float = 20.0) -> bytes:
+@dataclass(frozen=True, slots=True)
+class FeedResponse:
+    document: bytes
+    url: str
+    etag: str = ""
+    last_modified: str = ""
+    not_modified: bool = False
+
+
+Fetcher = Callable[..., bytes | FeedResponse]
+
+
+def fetch_feed(
+    url: str,
+    *,
+    timeout: float = 20.0,
+    etag: str = "",
+    last_modified: str = "",
+) -> FeedResponse:
+    headers = {
+        "User-Agent": "Herald/0.1 (+local research reader)",
+        "Accept": (
+            "application/atom+xml, application/rss+xml, "
+            "application/xml, text/xml, text/html"
+        ),
+    }
+    if etag:
+        headers["If-None-Match"] = etag
+    if last_modified:
+        headers["If-Modified-Since"] = last_modified
     request = urllib.request.Request(
         url,
-        headers={
-            "User-Agent": "Herald/0.1 (+local research reader)",
-            "Accept": (
-                "application/atom+xml, application/rss+xml, "
-                "application/xml, text/xml"
-            ),
-        },
+        headers=headers,
     )
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             document = response.read(10 * 1024 * 1024 + 1)
+            response_url = response.geturl()
+            response_etag = response.headers.get("ETag", "")
+            response_modified = response.headers.get("Last-Modified", "")
+    except urllib.error.HTTPError as error:
+        if error.code == 304:
+            return FeedResponse(
+                document=b"",
+                url=error.geturl() or url,
+                etag=error.headers.get("ETag", etag),
+                last_modified=error.headers.get("Last-Modified", last_modified),
+                not_modified=True,
+            )
+        raise FeedFetchError(f"Could not fetch {url}: {error}") from error
     except (
         urllib.error.URLError,
         http.client.HTTPException,
@@ -52,19 +91,26 @@ def fetch_feed(url: str, *, timeout: float = 20.0) -> bytes:
         raise FeedFetchError(f"Could not fetch {url}: {error}") from error
     if len(document) > 10 * 1024 * 1024:
         raise FeedFetchError(f"Feed exceeds the 10 MiB limit: {url}")
-    return document
+    return FeedResponse(
+        document=document,
+        url=response_url,
+        etag=response_etag,
+        last_modified=response_modified,
+    )
 
 
 @dataclass(frozen=True, slots=True)
 class RefreshResult:
     source_id: int
     source_title: str
+    content_kind: str
     fetched: int
     created: int
     updated: int
     error: str | None = None
+    not_modified: bool = False
 
-    def to_dict(self) -> dict[str, int | str | None]:
+    def to_dict(self) -> dict[str, bool | int | str | None]:
         return asdict(self)
 
 
@@ -80,8 +126,10 @@ class HeraldService:
         paper_importer: PaperImporter | None = None,
         default_vault_path: str | Path | None = None,
         archive_root: str | Path | None = None,
+        now: Callable[[], datetime] | None = None,
     ):
         self.database = database
+        self._uses_default_fetcher = fetcher is None
         self.fetcher = fetcher or fetch_feed
         self.summarizer = summarizer or LocalSummarizer()
         self.relevance = relevance or RelevanceCoordinator(RelevanceEngine(database))
@@ -93,6 +141,7 @@ class HeraldService:
         self.archive_root = Path(
             archive_root or database.path.parent / "obsidian-archive"
         ).expanduser().resolve()
+        self.now = now or (lambda: datetime.now(UTC))
 
     @property
     def exporter(self) -> ObsidianExporter:
@@ -110,28 +159,152 @@ class HeraldService:
     def seed_curated_sources(self) -> int:
         existing = {source["url"] for source in self.database.list_sources()}
         for source in CURATED_SOURCES:
-            self.database.add_source(source.title, source.url, source.category)
+            self.database.add_source(
+                source.title,
+                source.url,
+                source.category,
+                content_kind=source.content_kind,
+            )
         return sum(source.url not in existing for source in CURATED_SOURCES)
 
-    def add_source(self, title: str, url: str, category: str = "Unsorted") -> int:
+    def add_source(
+        self,
+        title: str,
+        url: str,
+        category: str = "Unsorted",
+        *,
+        content_kind: str = "paper",
+    ) -> int:
         if not title.strip():
             raise ValueError("Source title cannot be empty")
         parts = urlsplit(url.strip())
         if parts.scheme not in {"http", "https"} or not parts.netloc:
             raise ValueError("Source URL must be an HTTP or HTTPS URL")
-        return self.database.add_source(title, url, category or "Unsorted")
+        return self.database.add_source(
+            title,
+            canonicalize_url(url),
+            category or "Unsorted",
+            content_kind=content_kind,
+        )
 
     def list_sources(self, enabled_only: bool = False) -> list[dict[str, object]]:
         return self.database.list_sources(enabled_only=enabled_only)
 
+    def _fetch_source_url(
+        self,
+        url: str,
+        *,
+        etag: str = "",
+        last_modified: str = "",
+    ) -> FeedResponse:
+        if self._uses_default_fetcher:
+            result = self.fetcher(url, etag=etag, last_modified=last_modified)
+            if isinstance(result, FeedResponse):
+                return result
+            return FeedResponse(document=result, url=url)
+        result = self.fetcher(url)
+        if isinstance(result, FeedResponse):
+            return result
+        return FeedResponse(document=result, url=url)
+
+    @staticmethod
+    def _parse_timestamp(value: str | None) -> datetime | None:
+        if not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed.astimezone(UTC)
+
+    def _include_feed_entry(
+        self,
+        source: dict[str, object],
+        guid: str,
+        published_at: str | None,
+        bootstrap_skips: set[str],
+    ) -> bool:
+        if str(source.get("content_kind") or "paper") != "news":
+            return True
+        if source.get("refresh_succeeded_at"):
+            return guid not in bootstrap_skips
+        published = self._parse_timestamp(published_at)
+        if published is None:
+            return False
+        return published >= self.now().astimezone(UTC) - timedelta(days=30)
+
     def refresh_source(self, source: dict[str, object]) -> RefreshResult:
         source_id = int(source["id"])
+        current_source = self.database.get_source(source_id)
+        if current_source is None:
+            raise KeyError(f"Source {source_id} does not exist")
+        source = current_source
         source_title = str(source["title"])
-        document = self.fetcher(str(source["url"]))
-        entries = parse_feed(document)
+        fetch_url = str(source.get("resolved_url") or source["url"])
+        try:
+            response = self._fetch_source_url(
+                fetch_url,
+                etag=str(source.get("etag") or ""),
+                last_modified=str(source.get("last_modified") or ""),
+            )
+            if response.not_modified:
+                self.database.update_source_refresh_state(
+                    source_id,
+                    succeeded=True,
+                    etag=response.etag or None,
+                    last_modified=response.last_modified or None,
+                )
+                return RefreshResult(
+                    source_id=source_id,
+                    source_title=source_title,
+                    content_kind=str(source.get("content_kind") or "paper"),
+                    fetched=0,
+                    created=0,
+                    updated=0,
+                    not_modified=True,
+                )
+            resolved_url = str(source.get("resolved_url") or "")
+            if not resolved_url and canonicalize_url(response.url) != canonicalize_url(
+                str(source["url"])
+            ):
+                resolved_url = canonicalize_url(response.url)
+            try:
+                entries = parse_feed(response.document)
+            except FeedParseError:
+                if resolved_url:
+                    raise
+                discovered = discover_feed_url(response.document, response.url)
+                if discovered is None:
+                    raise
+                feed_response = self._fetch_source_url(discovered)
+                if feed_response.not_modified:
+                    entries = []
+                else:
+                    entries = parse_feed(feed_response.document)
+                response = feed_response
+                resolved_url = discovered
+        except (FeedFetchError, FeedParseError, ValueError) as error:
+            self.database.update_source_refresh_state(
+                source_id, succeeded=False, error=str(error)
+            )
+            raise
         created = 0
         updated = 0
+        bootstrap_skips = self.database.list_source_bootstrap_skips(source_id)
+        new_bootstrap_skips: list[str] = []
         for entry in entries:
+            if not self._include_feed_entry(
+                source,
+                entry.guid,
+                entry.published_at,
+                bootstrap_skips,
+            ):
+                if not source.get("refresh_succeeded_at"):
+                    new_bootstrap_skips.append(entry.guid)
+                continue
+            canonical_url = canonicalize_url(entry.url)
             entry_id, was_created = self.database.upsert_entry(
                 source_id=source_id,
                 guid=entry.guid,
@@ -142,18 +315,34 @@ class HeraldService:
                 content=entry.content,
                 summary=deterministic_summary(entry.title, entry.content),
                 summary_provider="extractive",
+                content_kind=str(source.get("content_kind") or "paper"),
+                canonical_url=canonical_url,
             )
             created += int(was_created)
             updated += int(not was_created)
+            if str(source.get("content_kind") or "paper") == "news":
+                self.database.set_enrichment_state(entry_id, "not_applicable")
             current = self.database.get_entry(entry_id)
             if current is not None and current["status"] == "kept":
                 try:
                     self.export_entry(entry_id)
                 except (OSError, ValueError, ObsidianConflictError):
                     pass
+        self.database.add_source_bootstrap_skips(source_id, new_bootstrap_skips)
+        self.database.update_source_refresh_state(
+            source_id,
+            succeeded=True,
+            etag=response.etag,
+            last_modified=response.last_modified,
+            resolved_url=resolved_url or None,
+        )
+        content_kind = str(source.get("content_kind") or "paper")
+        if created and content_kind == "news":
+            self.relevance.start("news")
         return RefreshResult(
             source_id=source_id,
             source_title=source_title,
+            content_kind=content_kind,
             fetched=len(entries),
             created=created,
             updated=updated,
@@ -167,10 +356,13 @@ class HeraldService:
             try:
                 results.append(self.refresh_source(source))
             except (FeedFetchError, FeedParseError, ValueError) as error:
+                # refresh_source records source health before propagating; keep the
+                # remaining feeds isolated from this failure.
                 results.append(
                     RefreshResult(
                         source_id=int(source["id"]),
                         source_title=str(source["title"]),
+                        content_kind=str(source.get("content_kind") or "paper"),
                         fetched=0,
                         created=0,
                         updated=0,

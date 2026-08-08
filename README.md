@@ -29,7 +29,8 @@ generated blocks, so custom properties and personal notes survive every sync.
 ## Fetch real sources
 
 `init` seeds 11 arXiv feeds covering chip design and digital circuits,
-operating systems, machine learning, and reinforcement learning. Fetch them
+operating systems, machine learning, and reinforcement learning, plus official
+announcement feeds from NVIDIA, OpenAI, AMD, and Intel. Fetch them
 from the dashboard's refresh button or the command line:
 
 ```bash
@@ -38,9 +39,13 @@ python -m herald.cli refresh
 
 Refresh requires internet access. A failed source is reported without losing
 entries fetched from the other sources. Repeated refreshes update existing
-entries and deduplicate articles cross-listed by URL.
+entries and deduplicate articles cross-listed by canonical URL. Herald removes
+known tracking parameters, uses ETag/Last-Modified conditional requests, and
+records per-source refresh health. The initial News refresh imports only the
+latest 30 days; later refreshes ingest every newly observed announcement.
 
-To add another RSS or Atom feed, use `POST /api/sources` as documented in
+To add another RSS or Atom feed, or a website exposing a standard feed
+autodiscovery link, use `POST /api/sources` as documented in
 [`docs/API.md`](docs/API.md). To inspect or automate Herald from the command
 line, run `python -m herald.cli --help`.
 

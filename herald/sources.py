@@ -8,9 +8,10 @@ class CuratedSource:
     title: str
     url: str
     category: str
+    content_kind: str = "paper"
 
 
-CURATED_SOURCES = (
+RESEARCH_SOURCES = (
     CuratedSource(
         "arXiv: Hardware Architecture",
         "https://rss.arxiv.org/rss/cs.AR",
@@ -67,3 +68,34 @@ CURATED_SOURCES = (
         "Reinforcement Learning",
     ),
 )
+
+
+NEWS_SOURCES = (
+    CuratedSource(
+        "NVIDIA Newsroom",
+        "https://nvidianews.nvidia.com/releases.xml",
+        "NVIDIA",
+        "news",
+    ),
+    CuratedSource(
+        "OpenAI News",
+        "https://openai.com/news/rss.xml",
+        "OpenAI",
+        "news",
+    ),
+    CuratedSource(
+        "AMD Newsroom",
+        "https://newsroom.amd.com/rss.xml",
+        "AMD",
+        "news",
+    ),
+    CuratedSource(
+        "Intel Newsroom",
+        "https://newsroom.intel.com/feed",
+        "Intel",
+        "news",
+    ),
+)
+
+
+CURATED_SOURCES = RESEARCH_SOURCES + NEWS_SOURCES

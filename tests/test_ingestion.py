@@ -2,11 +2,18 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import Mock, patch
 
-from herald.feeds import FeedParseError, parse_feed
-from herald.service import HeraldService
-from herald.sources import CURATED_SOURCES
+from herald.feeds import (
+    FeedParseError,
+    canonicalize_url,
+    discover_feed_url,
+    parse_feed,
+)
+from herald.service import FeedResponse, HeraldService
+from herald.sources import CURATED_SOURCES, NEWS_SOURCES, RESEARCH_SOURCES
 from herald.storage import Database
 
 
@@ -56,6 +63,38 @@ RDF_FEED = b"""<?xml version="1.0"?>
 </rdf:RDF>"""
 
 
+NEWS_FEED = b"""<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <title>Official Company Newsroom</title>
+    <item>
+      <guid>launch-recent</guid>
+      <title>Company launches a new accelerator</title>
+      <link>https://example.com/news/accelerator?utm_source=mail&amp;edition=global#top</link>
+      <pubDate>Fri, 07 Aug 2026 09:00:00 GMT</pubDate>
+      <description><![CDATA[<p>A faster accelerator is now available.</p>]]></description>
+      <content:encoded><![CDATA[<p>Official launch details for developers.</p>]]></content:encoded>
+    </item>
+    <item>
+      <guid>launch-old</guid>
+      <title>Company launches an older product</title>
+      <link>https://example.com/news/older</link>
+      <pubDate>Thu, 01 Jan 2026 09:00:00 GMT</pubDate>
+      <description>Older official announcement.</description>
+    </item>
+  </channel>
+</rss>"""
+
+
+class RecordingRelevance:
+    def __init__(self) -> None:
+        self.started: list[str] = []
+
+    def start(self, content_kind: str) -> dict[str, str]:
+        self.started.append(content_kind)
+        return {"content_kind": content_kind}
+
+
 class FeedParserTests(unittest.TestCase):
     def test_parses_rss_namespaces_dates_and_full_content(self) -> None:
         entries = parse_feed(RSS_FEED)
@@ -88,6 +127,23 @@ class FeedParserTests(unittest.TestCase):
         with self.assertRaises(FeedParseError):
             parse_feed(b"<html></html>")
 
+    def test_canonicalizes_tracking_without_losing_meaningful_query_data(self) -> None:
+        self.assertEqual(
+            canonicalize_url(
+                "HTTPS://Example.COM:443/news?id=7&utm_medium=email&lang=en#top"
+            ),
+            "https://example.com/news?id=7&lang=en",
+        )
+
+    def test_discovers_standard_relative_atom_link_without_scraping(self) -> None:
+        document = b"""<html><head>
+          <link rel="alternate" type="application/atom+xml" href="/updates.atom">
+        </head><body><a href="/not-a-feed">News</a></body></html>"""
+        self.assertEqual(
+            discover_feed_url(document, "https://example.com/news"),
+            "https://example.com/updates.atom",
+        )
+
 
 class IngestionServiceTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -102,7 +158,7 @@ class IngestionServiceTests(unittest.TestCase):
         self.assertEqual(service.seed_curated_sources(), len(CURATED_SOURCES))
         self.assertEqual(service.seed_curated_sources(), 0)
         sources = service.list_sources()
-        self.assertEqual(len(sources), 11)
+        self.assertEqual(len(sources), 15)
         self.assertEqual(
             {source["category"] for source in sources},
             {
@@ -110,7 +166,19 @@ class IngestionServiceTests(unittest.TestCase):
                 "Machine Learning",
                 "Operating Systems",
                 "Reinforcement Learning",
+                "NVIDIA",
+                "OpenAI",
+                "AMD",
+                "Intel",
             },
+        )
+        self.assertEqual(
+            sum(source["content_kind"] == "paper" for source in sources),
+            len(RESEARCH_SOURCES),
+        )
+        self.assertEqual(
+            sum(source["content_kind"] == "news" for source in sources),
+            len(NEWS_SOURCES),
         )
 
     def test_refresh_is_idempotent(self) -> None:
@@ -158,6 +226,174 @@ class IngestionServiceTests(unittest.TestCase):
         self.assertEqual(len(results), 2)
         self.assertEqual(sum(result.created for result in results), 1)
         self.assertEqual(sum(result.error is not None for result in results), 1)
+        bad = next(source for source in self.database.list_sources() if source["title"] == "Bad")
+        good = next(source for source in self.database.list_sources() if source["title"] == "Good")
+        self.assertTrue(bad["refresh_attempted_at"])
+        self.assertTrue(bad["refresh_error"])
+        self.assertTrue(good["refresh_succeeded_at"])
+        self.assertEqual(good["refresh_error"], "")
+
+    def test_news_bootstraps_thirty_days_then_accepts_every_observed_item(self) -> None:
+        source_id = self.database.add_source(
+            "Official News",
+            "https://example.com/feed.xml",
+            "Company",
+            content_kind="news",
+        )
+        ranking = RecordingRelevance()
+        delayed_feed = NEWS_FEED.replace(b"launch-old", b"delayed-old")
+        documents = iter((NEWS_FEED, NEWS_FEED, delayed_feed))
+        service = HeraldService(
+            self.database,
+            fetcher=lambda _: next(documents),
+            relevance=ranking,  # type: ignore[arg-type]
+            now=lambda: datetime(2026, 8, 8, tzinfo=UTC),
+        )
+        source = self.database.get_source(source_id)
+        assert source is not None
+
+        first = service.refresh_source(source)
+        second = service.refresh_source(source)
+        third = service.refresh_source(source)
+
+        self.assertEqual((first.fetched, first.created), (2, 1))
+        self.assertEqual((second.created, second.updated), (0, 1))
+        self.assertEqual((third.created, third.updated), (1, 1))
+        self.assertEqual(len(self.database.list_entries(content_kind="news")), 2)
+        self.assertEqual(ranking.started, ["news", "news"])
+        self.assertEqual(
+            self.database.list_source_bootstrap_skips(source_id), {"launch-old"}
+        )
+        recent = next(
+            entry
+            for entry in self.database.list_entries()
+            if entry["guid"] == "launch-recent"
+        )
+        self.assertEqual(
+            recent["canonical_url"],
+            "https://example.com/news/accelerator?edition=global",
+        )
+
+    def test_autodiscovery_is_cached_and_feed_validators_are_persisted(self) -> None:
+        page = b"""<html><head><link rel="alternate" type="application/rss+xml"
+                    href="/official.xml"></head></html>"""
+        requested: list[str] = []
+
+        def fetcher(url: str) -> bytes | FeedResponse:
+            requested.append(url)
+            if url.endswith("/news"):
+                return page
+            return FeedResponse(
+                NEWS_FEED,
+                "https://example.com/official.xml",
+                etag='"news-v1"',
+                last_modified="Fri, 07 Aug 2026 12:00:00 GMT",
+            )
+
+        source_id = self.database.add_source(
+            "Official News",
+            "https://example.com/news",
+            "Company",
+            content_kind="news",
+        )
+        service = HeraldService(
+            self.database,
+            fetcher=fetcher,
+            relevance=RecordingRelevance(),  # type: ignore[arg-type]
+            now=lambda: datetime(2026, 8, 8, tzinfo=UTC),
+        )
+        source = self.database.get_source(source_id)
+        assert source is not None
+
+        service.refresh_source(source)
+        refreshed = self.database.get_source(source_id)
+        assert refreshed is not None
+        self.assertEqual(refreshed["resolved_url"], "https://example.com/official.xml")
+        self.assertEqual(refreshed["etag"], '"news-v1"')
+
+        service.refresh_source(source)
+        self.assertEqual(
+            requested,
+            [
+                "https://example.com/news",
+                "https://example.com/official.xml",
+                "https://example.com/official.xml",
+            ],
+        )
+
+    def test_conditional_not_modified_is_a_successful_no_op(self) -> None:
+        source_id = self.database.add_source(
+            "Official News",
+            "https://example.com/official.xml",
+            "Company",
+            content_kind="news",
+        )
+        responses = [
+            FeedResponse(NEWS_FEED, "https://example.com/official.xml", etag='"v1"'),
+            FeedResponse(
+                b"",
+                "https://example.com/official.xml",
+                etag='"v1"',
+                not_modified=True,
+            ),
+        ]
+        with patch("herald.service.fetch_feed", new=Mock(side_effect=responses)) as mocked:
+            service = HeraldService(
+                self.database,
+                relevance=RecordingRelevance(),  # type: ignore[arg-type]
+                now=lambda: datetime(2026, 8, 8, tzinfo=UTC),
+            )
+            source = self.database.get_source(source_id)
+            assert source is not None
+            service.refresh_source(source)
+            result = service.refresh_source(source)
+
+        self.assertTrue(result.not_modified)
+        self.assertEqual((result.fetched, result.created, result.updated), (0, 0, 0))
+        self.assertEqual(mocked.call_args_list[1].kwargs["etag"], '"v1"')
+        refreshed = self.database.get_source(source_id)
+        assert refreshed is not None
+        self.assertEqual(refreshed["refresh_error"], "")
+
+    def test_canonical_url_deduplicates_feeds_and_preserves_triage(self) -> None:
+        first_id = self.database.add_source(
+            "News one", "https://example.com/one.xml", "Company", content_kind="news"
+        )
+        second_id = self.database.add_source(
+            "News two", "https://example.com/two.xml", "Company", content_kind="news"
+        )
+        duplicate_feed = NEWS_FEED.replace(
+            b"launch-recent", b"other-guid"
+        ).replace(
+            b"utm_source=mail&amp;edition=global",
+            b"edition=global&amp;fbclid=tracker",
+        ).replace(
+            b"<item>\n      <guid>launch-old</guid>",
+            b"<!-- omitted old item <item>\n      <guid>launch-old</guid>",
+        ).replace(b"</channel>", b"-->\n  </channel>")
+        feeds = {
+            "https://example.com/one.xml": NEWS_FEED,
+            "https://example.com/two.xml": duplicate_feed,
+        }
+        service = HeraldService(
+            self.database,
+            fetcher=lambda url: feeds[url],
+            relevance=RecordingRelevance(),  # type: ignore[arg-type]
+            now=lambda: datetime(2026, 8, 8, tzinfo=UTC),
+        )
+        first = self.database.get_source(first_id)
+        second = self.database.get_source(second_id)
+        assert first is not None and second is not None
+        service.refresh_source(first)
+        entry = self.database.list_entries()[0]
+        self.database.set_status(int(entry["id"]), "discarded")
+
+        result = service.refresh_source(second)
+
+        self.assertEqual((result.created, result.updated), (0, 1))
+        entries = self.database.list_entries()
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["status"], "discarded")
 
     def test_add_source_validates_user_input(self) -> None:
         service = HeraldService(self.database)
