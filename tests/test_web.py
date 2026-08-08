@@ -71,8 +71,8 @@ class WebTests(unittest.TestCase):
             html = response.read().decode()
         self.assertEqual(response.status, 200)
         self.assertIn("Herald", html)
-        self.assertIn("/static/app.js?v=21", html)
-        self.assertIn("/static/styles.css?v=19", html)
+        self.assertIn("/static/app.js?v=22", html)
+        self.assertIn("/static/styles.css?v=20", html)
         self.assertIn('id="reader-pdf"', html)
         self.assertIn('id="reader-content" class="reader-content" hidden', html)
         self.assertNotIn('id="reader-placeholder"', html)
@@ -87,6 +87,10 @@ class WebTests(unittest.TestCase):
         self.assertIn('id="import-dialog"', html)
         self.assertIn('id="references-section"', html)
         self.assertIn('id="load-more"', html)
+        self.assertIn('class="workspace-switch" id="kind-nav"', html)
+        self.assertIn('data-kind="paper" role="tab" aria-selected="true"', html)
+        self.assertIn('data-kind="news" role="tab" aria-selected="false"', html)
+        self.assertIn('id="source-health-list"', html)
 
         with urlopen(self.base_url + "/static/styles.css") as response:
             styles = response.read().decode()
@@ -96,6 +100,9 @@ class WebTests(unittest.TestCase):
             self.assertIn("overscroll-behavior: contain", styles)
             self.assertEqual(response.headers["Cache-Control"], "no-store, max-age=0")
             self.assertIn("--green", styles)
+            self.assertIn(".workspace-switch", styles)
+            self.assertIn(".news-card", styles)
+            self.assertIn(".source-health", styles)
 
         with urlopen(self.base_url + "/static/app.js") as response:
             script = response.read().decode()
@@ -108,13 +115,62 @@ class WebTests(unittest.TestCase):
         self.assertIn("Preview · double-click", script)
         self.assertIn('status: "unread"', script)
         self.assertIn('state.status = "unread"', script)
-        self.assertIn('kind: "paper"', script)
+        self.assertIn('kind: state.activeKind', script)
         self.assertIn('params.set("cursor", cursor)', script)
-        self.assertIn('api("/api/profiles/paper"', script)
+        self.assertIn('api(`/api/profiles/${state.activeKind}`)', script)
         self.assertIn('api("/api/import/paper"', script)
         self.assertIn('/api/references/${button.dataset.addReference}/add', script)
         self.assertIn('/obsidian/retry', script)
         self.assertIn('relevanceReasons(ranking).slice(0, 3)', script)
+        self.assertIn('elements.kindNav.addEventListener("click", changeWorkspace)', script)
+        self.assertIn('state.activeKind === "paper" ? api(`/api/entries/${id}/references`)', script)
+
+    def test_news_workspace_search_counts_and_profile_contract(self) -> None:
+        source_id = self.database.add_source(
+            "Official Accelerator News",
+            "https://example.com/official.xml",
+            "Company",
+            content_kind="news",
+        )
+        entry_id, _created = self.database.upsert_entry(
+            source_id=source_id,
+            guid="launch-1",
+            url="https://example.com/launch",
+            title="Company launches an accelerator",
+            content="A new chip for inference workloads.",
+            content_kind="news",
+        )
+        profile = self.database.get_relevance_profile("news")
+        assert profile is not None
+        self.database.upsert_entry_ranking(
+            entry_id,
+            profile["id"],
+            score=91,
+            bucket="relevant",
+            explanation={"matched_interests": ["hardware and chip announcements"]},
+            model="tfidf-v1",
+        )
+
+        status, page = self.request(
+            "/api/entries?kind=news&bucket=relevant&q=accelerator&limit=10"
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual([entry["id"] for entry in page["entries"]], [entry_id])
+        self.assertEqual(page["entries"][0]["relevance_score"], 91)
+
+        status, stats = self.request("/api/stats")
+        self.assertEqual(status, 200)
+        self.assertEqual(stats["workspaces"]["news"]["total"], 1)
+        self.assertEqual(stats["workspaces"]["news"]["statuses"]["unread"], 1)
+
+        status, profile_payload = self.request("/api/profiles/news")
+        self.assertEqual(status, 200)
+        self.assertIn(profile_payload["threshold_mode"], {"auto", "adaptive"})
+        status, updated = self.request(
+            "/api/profiles/news", method="PUT", payload={"threshold": 42}
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(updated["profile"]["threshold_mode"], "manual")
 
     def test_paper_ui_uses_paginated_ranked_api_contract(self) -> None:
         self.server.service.relevance.engine.rescore("paper")

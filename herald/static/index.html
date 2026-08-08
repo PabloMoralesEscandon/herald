@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light">
     <meta name="theme-color" content="#f4f1e8">
-    <title>Herald — Research inbox</title>
-    <link rel="stylesheet" href="/static/styles.css?v=19">
-    <script src="/static/app.js?v=21" defer></script>
+    <title>Herald — Technical reading inbox</title>
+    <link rel="stylesheet" href="/static/styles.css?v=20">
+    <script src="/static/app.js?v=22" defer></script>
   </head>
   <body>
     <div class="app-shell">
@@ -19,11 +19,15 @@
             <small>Your technical reading desk</small>
           </span>
         </a>
+        <div class="workspace-switch" id="kind-nav" role="tablist" aria-label="Content workspace">
+          <button class="active" data-kind="paper" role="tab" aria-selected="true" type="button">Papers</button>
+          <button data-kind="news" role="tab" aria-selected="false" type="button">News</button>
+        </div>
         <div class="topbar-tools">
           <label class="search-field">
-            <span class="sr-only">Search articles</span>
+            <span class="sr-only" id="search-label">Search papers</span>
             <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m21 21-4.35-4.35m2.35-5.65a8 8 0 1 1-16 0 8 8 0 0 1 16 0Z"/></svg>
-            <input id="search-input" type="search" placeholder="Search your inbox" autocomplete="off">
+            <input id="search-input" type="search" placeholder="Search papers" aria-labelledby="search-label" autocomplete="off">
             <kbd>/</kbd>
           </label>
           <div class="today" id="today" aria-label="Today's date"></div>
@@ -60,6 +64,10 @@
         </nav>
         <p class="section-label topics-label">Topics</p>
         <div id="category-nav" class="category-nav"></div>
+        <details class="source-health">
+          <summary><span>Source health</span><span id="source-health-summary">—</span></summary>
+          <div id="source-health-list"></div>
+        </details>
         <div class="sidebar-foot">
           <span class="pulse" aria-hidden="true"></span>
           <span><strong>Local only</strong><small>Your reading data stays here.</small></span>
@@ -70,11 +78,11 @@
         <section class="inbox-pane" aria-labelledby="inbox-title">
           <div class="pane-heading">
             <div>
-              <p class="eyebrow">Reading queue</p>
+              <p class="eyebrow" id="queue-eyebrow">Paper queue</p>
               <h1 id="inbox-title">Unread</h1>
             </div>
             <div class="pane-actions">
-              <button class="quiet-button" id="profile-button" type="button" title="Tune paper relevance">Tune filter</button>
+              <button class="quiet-button" id="profile-button" type="button" title="Tune relevance">Tune filter</button>
               <button class="primary-button" id="import-button" type="button">+ Add paper</button>
               <label class="select-wrap">
                 <span class="sr-only">Filter category</span>
@@ -176,7 +184,7 @@
     <dialog id="profile-dialog" class="modal">
       <form id="profile-form" class="modal-card">
         <header class="modal-header">
-          <div><p class="eyebrow">Paper relevance</p><h2>Tune what reaches you</h2></div>
+          <div><p class="eyebrow" id="profile-kind-label">Paper relevance</p><h2>Tune what reaches you</h2></div>
           <button class="modal-close" type="button" data-close-dialog="profile-dialog" aria-label="Close">×</button>
         </header>
         <p class="modal-intro">One phrase per line. Herald ranks locally and keeps everything below the threshold in Filtered.</p>

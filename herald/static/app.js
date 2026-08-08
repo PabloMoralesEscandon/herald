@@ -2,6 +2,7 @@
 
 const PAGE_SIZE = 50;
 const state = {
+  activeKind: "paper",
   entries: [],
   sources: [],
   status: "unread",
@@ -21,6 +22,7 @@ const elements = {};
 let toastTimer;
 let detailRequest = 0;
 let rescorePollTimer;
+let searchTimer;
 
 document.addEventListener("DOMContentLoaded", () => {
   Object.assign(elements, {
@@ -29,6 +31,7 @@ document.addEventListener("DOMContentLoaded", () => {
     resultCount: document.querySelector("#result-count"),
     title: document.querySelector("#inbox-title"),
     statusNav: document.querySelector("#status-nav"),
+    kindNav: document.querySelector("#kind-nav"),
     relevanceNav: document.querySelector("#relevance-nav"),
     categoryNav: document.querySelector("#category-nav"),
     categorySelect: document.querySelector("#category-select"),
@@ -45,6 +48,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   document.querySelector("#today").innerHTML = formatToday();
+  elements.kindNav.addEventListener("click", changeWorkspace);
   elements.statusNav.addEventListener("click", changeStatusFilter);
   elements.relevanceNav.addEventListener("click", changeBucketFilter);
   elements.list.addEventListener("click", previewEntryFromEvent);
@@ -86,13 +90,14 @@ async function api(path, options = {}) {
 }
 
 function entriesPath(cursor = null) {
-  const params = new URLSearchParams({ kind: "paper", limit: String(PAGE_SIZE) });
+  const params = new URLSearchParams({ kind: state.activeKind, limit: String(PAGE_SIZE) });
   if (state.bucket) {
     params.set("bucket", state.bucket);
     params.set("status", "unread");
   }
   else if (state.status !== "all") params.set("status", state.status);
   if (state.category !== "all") params.set("category", state.category);
+  if (state.search) params.set("q", state.search);
   if (cursor) params.set("cursor", cursor);
   return `/api/entries?${params}`;
 }
@@ -104,7 +109,7 @@ async function loadData({ preserveSelection = true } = {}) {
       api(entriesPath()),
       api("/api/sources"),
       api("/api/stats"),
-      api("/api/profiles/paper"),
+      api(`/api/profiles/${state.activeKind}`),
       api("/api/relevance/health"),
     ]);
     state.entries = page.entries;
@@ -113,8 +118,10 @@ async function loadData({ preserveSelection = true } = {}) {
     state.stats = stats;
     state.profile = profile;
     state.relevanceHealth = health;
+    renderChrome();
     renderCategories();
     renderCounts();
+    renderSourceHealth();
     renderNavigation();
     renderRankingBanner();
     renderList();
@@ -167,8 +174,8 @@ function filteredEntries() {
 
 function handleSearch(event) {
   state.search = event.target.value.trim().toLowerCase();
-  renderList();
-  if (!filteredEntries().some((entry) => entry.id === state.selectedId)) clearSelection();
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => loadData({ preserveSelection: false }), 180);
 }
 
 function renderList() {
@@ -179,7 +186,7 @@ function renderList() {
   setText("#sort-label", state.bucket ? "Highest score first" : "Newest first");
   elements.list.hidden = entries.length === 0;
   elements.empty.hidden = entries.length !== 0;
-  elements.pagination.hidden = !state.nextCursor || Boolean(state.search);
+  elements.pagination.hidden = !state.nextCursor;
   elements.list.innerHTML = entries.map((entry) => {
     const ranking = rankingFor(entry);
     const reasons = relevanceReasons(ranking).slice(0, 3);
@@ -191,21 +198,21 @@ function renderList() {
       ? `<span class="ranking-mini" title="Scored ${escapeAttribute(longDateTime(ranking.scored_at))}">${escapeHtml(modelLabel(ranking.model))}</span>`
       : "";
     return `
-      <button class="entry-card ${entry.status === "unread" ? "unread" : ""} ${entry.id === state.selectedId ? "selected" : ""}"
+      <button class="entry-card ${entry.content_kind === "news" ? "news-card" : "paper-card"} ${entry.status === "unread" ? "unread" : ""} ${entry.id === state.selectedId ? "selected" : ""}"
         id="entry-${entry.id}" type="button" data-entry-id="${entry.id}" aria-pressed="${entry.id === state.selectedId ? "true" : "false"}"
-        title="Single-click to preview; double-click to open ${arxivPdfUrl(entry.url) ? "the PDF" : "the original"}">
+        title="Single-click to preview; double-click to open ${arxivPdfUrl(entry.url) ? "the PDF" : entry.content_kind === "news" ? "the announcement" : "the original"}">
         <span class="card-top"><span class="card-category">${escapeHtml(entry.source_category)}</span><span class="card-top-right">${score}<time>${escapeHtml(relativeDate(entry.published_at))}</time></span></span>
         <h2>${escapeHtml(entry.title)}</h2>
         <span class="card-summary">${escapeHtml(entry.summary || entry.content || "No summary yet.")}</span>
         ${reasonMarkup}
-        <span class="card-foot"><span>${escapeHtml(entry.source_title)}</span>${provenance}${entry.status !== "unread" ? `<span class="status-mini ${entry.status}">${escapeHtml(entry.status)}</span>` : ""}<span class="open-cue">Preview · double-click ${arxivPdfUrl(entry.url) ? "PDF" : "original"} ↗</span></span>
+        <span class="card-foot"><span>${escapeHtml(entry.source_title)}</span>${provenance}${entry.status !== "unread" ? `<span class="status-mini ${entry.status}">${escapeHtml(entry.status)}</span>` : ""}<span class="open-cue">Preview · double-click ${arxivPdfUrl(entry.url) ? "PDF" : entry.content_kind === "news" ? "announcement" : "original"} ↗</span></span>
       </button>`;
   }).join("");
 }
 
 function renderCategories() {
   const categories = [...new Set([
-    ...state.sources.filter((source) => !source.content_kind || source.content_kind === "paper").map((source) => source.category),
+    ...state.sources.filter((source) => (source.content_kind || "paper") === state.activeKind).map((source) => source.category),
     ...state.entries.map((entry) => entry.source_category),
   ])].filter(Boolean).sort((a, b) => a.localeCompare(b));
   if (state.category !== "all" && !categories.includes(state.category)) state.category = "all";
@@ -218,16 +225,22 @@ function renderCategories() {
 }
 
 function renderCounts() {
+  const workspaceStats = state.stats.workspaces?.[state.activeKind] || {};
   ["all", "unread", "read", "kept", "discarded"].forEach((status) => {
-    const count = status === "all" ? (state.stats.content_kinds?.paper ?? state.stats.total) : (state.stats.statuses?.[status] || 0);
+    const count = status === "all" ? (workspaceStats.total || 0) : (workspaceStats.statuses?.[status] || 0);
     document.querySelector(`[data-count="${status}"]`).textContent = count;
   });
-  const relevance = state.stats.relevance?.paper || {};
+  const relevance = state.stats.relevance?.[state.activeKind] || {};
   document.querySelector('[data-count="relevant"]').textContent = relevance.relevant || 0;
   document.querySelector('[data-count="filtered"]').textContent = relevance.filtered || 0;
 }
 
 function renderNavigation() {
+  elements.kindNav.querySelectorAll("[data-kind]").forEach((button) => {
+    const active = button.dataset.kind === state.activeKind;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
+  });
   elements.statusNav.querySelectorAll("[data-status]").forEach((button) => {
     button.classList.toggle("active", !state.bucket && button.dataset.status === state.status);
   });
@@ -236,9 +249,29 @@ function renderNavigation() {
   });
 }
 
+function renderChrome() {
+  const label = state.activeKind === "paper" ? "Papers" : "News";
+  setText("#queue-eyebrow", `${state.activeKind === "paper" ? "Paper" : "News"} queue`);
+  setText("#search-label", `Search ${label.toLowerCase()}`);
+  elements.search.placeholder = `Search ${label.toLowerCase()}`;
+  document.querySelector("#import-button").hidden = state.activeKind !== "paper";
+  document.querySelector("#profile-button").title = `Tune ${label.toLowerCase()} relevance`;
+}
+
+function renderSourceHealth() {
+  const sources = state.sources.filter((source) => (source.content_kind || "paper") === state.activeKind);
+  const failing = sources.filter((source) => source.last_error);
+  setText("#source-health-summary", failing.length ? `${failing.length} issue${failing.length === 1 ? "" : "s"}` : `${sources.length} healthy`);
+  document.querySelector("#source-health-list").innerHTML = sources.length
+    ? sources.map((source) => `<div class="source-health-item ${source.last_error ? "error" : ""}">
+        <span>${escapeHtml(source.title)}</span><small>${source.last_error ? escapeHtml(source.last_error) : source.last_fetched_at ? `Updated ${escapeHtml(relativeDate(source.last_fetched_at))}` : "Awaiting first refresh"}</small>
+      </div>`).join("")
+    : "<p>No sources configured.</p>";
+}
+
 function renderRankingBanner() {
-  const job = state.relevanceHealth?.jobs?.paper;
-  const ranked = state.stats.relevance?.paper || {};
+  const job = state.relevanceHealth?.jobs?.[state.activeKind];
+  const ranked = state.stats.relevance?.[state.activeKind] || {};
   const pending = ranked.pending || 0;
   if (job?.state === "running") {
     elements.rankingBanner.hidden = false;
@@ -248,7 +281,8 @@ function renderRankingBanner() {
     elements.rankingBanner.innerHTML = `<span>!</span><span><strong>Rescore failed</strong> ${escapeHtml(job.error || "Unknown ranking error")}</span>`;
   } else if (pending > 0) {
     elements.rankingBanner.hidden = false;
-    elements.rankingBanner.innerHTML = `<span>○</span><span><strong>${pending} paper${pending === 1 ? " is" : "s are"} awaiting a score.</strong> Use Tune filter to rescore.</span>`;
+    const noun = state.activeKind === "paper" ? "paper" : "news item";
+    elements.rankingBanner.innerHTML = `<span>○</span><span><strong>${pending} ${noun}${pending === 1 ? " is" : "s are"} awaiting a score.</strong> Use Tune filter to rescore.</span>`;
   } else {
     elements.rankingBanner.hidden = true;
     elements.rankingBanner.innerHTML = "";
@@ -267,7 +301,7 @@ async function selectEntry(id) {
   try {
     const [entry, references] = await Promise.all([
       api(`/api/entries/${id}`),
-      api(`/api/entries/${id}/references`),
+      state.activeKind === "paper" ? api(`/api/entries/${id}/references`) : Promise.resolve({ references: [] }),
     ]);
     if (requestId !== detailRequest || state.selectedId !== id) return;
     state.selectedDetail = entry;
@@ -321,7 +355,7 @@ function renderReader(loading = false) {
   setText("#reader-category", entry.source_category);
   setText("#reader-source", entry.source_title);
   setText("#reader-title", entry.title);
-  setText("#reader-author", entry.author || "Unknown author");
+  setText("#reader-author", entry.author || (entry.content_kind === "news" ? "Official announcement" : "Unknown author"));
   const date = document.querySelector("#reader-date");
   date.textContent = longDate(entry.published_at);
   date.dateTime = entry.published_at || "";
@@ -336,11 +370,11 @@ function renderReader(loading = false) {
   const link = document.querySelector("#reader-link");
   link.href = entry.url;
   const pdfUrl = arxivPdfUrl(entry.url);
-  setText("#reader-fact-destination", pdfUrl ? "Direct arXiv PDF" : "Original article");
+  setText("#reader-fact-destination", pdfUrl ? "Direct arXiv PDF" : entry.content_kind === "news" ? "Official announcement" : "Original article");
   const pdfLink = document.querySelector("#reader-pdf");
   pdfLink.hidden = !pdfUrl;
   pdfLink.href = pdfUrl || "#";
-  link.innerHTML = pdfUrl ? "View abstract <span>↗</span>" : "Read original <span>↗</span>";
+  link.innerHTML = pdfUrl ? "View abstract <span>↗</span>" : entry.content_kind === "news" ? "Read announcement <span>↗</span>" : "Read original <span>↗</span>";
   const status = document.querySelector("#reader-status");
   status.textContent = entry.status;
   status.className = `status-chip ${entry.status}`;
@@ -368,9 +402,12 @@ function renderRelevance(entry) {
 }
 
 function renderMetadata(entry) {
+  const panel = document.querySelector(".metadata-panel");
+  panel.hidden = false;
+  setText("#metadata-heading", entry.content_kind === "news" ? "Announcement metadata" : "Research metadata");
   const enrichment = entry.enrichment_status || "pending";
   const provider = entry.enrichment_provider ? ` via ${entry.enrichment_provider}` : "";
-  setText("#reader-enrichment", `${sentenceCase(enrichment)}${provider}`);
+  setText("#reader-enrichment", entry.content_kind === "news" ? "Official source" : `${sentenceCase(enrichment)}${provider}`);
   const enrichmentError = document.querySelector("#reader-enrichment-error");
   enrichmentError.hidden = !entry.enrichment_error;
   enrichmentError.textContent = entry.enrichment_error || "";
@@ -519,6 +556,19 @@ function changeStatusFilter(event) {
   loadData({ preserveSelection: false });
 }
 
+function changeWorkspace(event) {
+  const button = event.target.closest("[data-kind]");
+  if (!button || button.dataset.kind === state.activeKind) return;
+  state.activeKind = button.dataset.kind;
+  state.status = "unread";
+  state.bucket = null;
+  state.category = "all";
+  state.search = "";
+  elements.search.value = "";
+  clearSelection();
+  loadData({ preserveSelection: false });
+}
+
 function changeBucketFilter(event) {
   const button = event.target.closest("[data-bucket]");
   if (!button) return;
@@ -552,7 +602,8 @@ function clearFilters() {
 
 async function openProfile() {
   try {
-    state.profile = await api("/api/profiles/paper");
+    state.profile = await api(`/api/profiles/${state.activeKind}`);
+    setText("#profile-kind-label", `${state.activeKind === "paper" ? "Paper" : "News"} relevance`);
     fillProfileForm(state.profile);
     await updateProfileJobState();
     elements.profileDialog.showModal();
@@ -581,10 +632,10 @@ async function saveProfile(event) {
     selectivity: ["broad", "balanced", "focused"][Number(document.querySelector("#selectivity-slider").value)] || "balanced",
   };
   try {
-    const result = await api("/api/profiles/paper", { method: "PUT", body: JSON.stringify(payload) });
+    const result = await api(`/api/profiles/${state.activeKind}`, { method: "PUT", body: JSON.stringify(payload) });
     state.profile = result.profile;
     fillProfileForm(result.profile);
-    showToast("Profile saved; paper scores are updating");
+    showToast(`Profile saved; ${state.activeKind} scores are updating`);
     pollRescore();
   } catch (error) { showToast(error.message, true); }
   finally {
@@ -597,8 +648,8 @@ async function rescorePapers() {
   const button = document.querySelector("#rescore-button");
   button.disabled = true;
   try {
-    await api("/api/profiles/paper/rescore", { method: "POST", body: "{}" });
-    showToast("Paper rescore started");
+    await api(`/api/profiles/${state.activeKind}/rescore`, { method: "POST", body: "{}" });
+    showToast(`${state.activeKind === "paper" ? "Paper" : "News"} rescore started`);
     pollRescore();
   } catch (error) { showToast(error.message, true); button.disabled = false; }
 }
@@ -614,7 +665,7 @@ function pollRescore() {
 async function updateProfileJobState() {
   try {
     state.relevanceHealth = await api("/api/relevance/health");
-    const job = state.relevanceHealth.jobs?.paper;
+    const job = state.relevanceHealth.jobs?.[state.activeKind];
     const label = job?.state === "running" ? "Updating locally…" : job?.state === "failed" ? `Failed: ${job.error}` : job?.state === "complete" ? "Scores up to date" : "Ready to score";
     setText("#profile-job-state", label);
     document.querySelector("#rescore-button").disabled = job?.state === "running";
@@ -627,6 +678,7 @@ async function updateProfileJobState() {
 }
 
 function openImport() {
+  if (state.activeKind !== "paper") return;
   document.querySelector("#paper-input").value = "";
   document.querySelector("#import-result").hidden = true;
   elements.importDialog.showModal();
@@ -786,9 +838,10 @@ function summaryProvenance(entry) {
   return { label: "Not generated", kind: "unknown" };
 }
 function filterTitle() {
+  const noun = state.activeKind === "paper" ? "papers" : "news";
   if (state.category !== "all") return state.category;
-  if (state.bucket) return state.bucket === "relevant" ? "Relevant papers" : "Filtered papers";
-  return { all: "All papers", unread: "Unread", read: "Read", kept: "Kept", discarded: "Discarded" }[state.status];
+  if (state.bucket) return `${state.bucket === "relevant" ? "Relevant" : "Filtered"} ${noun}`;
+  return { all: `All ${noun}`, unread: "Unread", read: "Read", kept: "Kept", discarded: "Discarded" }[state.status];
 }
 function setText(selector, value) { document.querySelector(selector).textContent = value || ""; }
 function escapeHtml(value) { const node = document.createElement("div"); node.textContent = String(value ?? ""); return node.innerHTML; }

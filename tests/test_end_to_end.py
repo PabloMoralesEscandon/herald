@@ -12,6 +12,8 @@ from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from herald.storage import Database
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -159,6 +161,47 @@ class EndToEndWorkflowTests(unittest.TestCase):
             exported["entry"]["exported_path"],
             markdown_path.relative_to(self.data_dir / "vault").as_posix(),
         )
+
+    def test_news_workspace_runs_from_clean_install(self) -> None:
+        self._run_cli("init")
+        self._start_server()
+        database = Database(self.data_dir / "herald.db")
+        source_id = database.add_source(
+            "Example Official News",
+            "https://example.com/news.xml",
+            "Example",
+            content_kind="news",
+        )
+        entry_id, _created = database.upsert_entry(
+            source_id=source_id,
+            guid="example-launch",
+            url="https://example.com/news/launch",
+            title="Example launches a new inference accelerator",
+            content="The official announcement describes a new accelerator.",
+            content_kind="news",
+        )
+        profile = database.get_relevance_profile("news")
+        self.assertIsNotNone(profile)
+        assert profile is not None
+        database.upsert_entry_ranking(
+            entry_id,
+            profile["id"],
+            score=88,
+            bucket="relevant",
+            explanation={"matched_interests": ["hardware announcements"]},
+            model="tfidf-v1",
+        )
+
+        status, page = self._request(
+            "/api/entries?kind=news&bucket=relevant&status=unread&q=accelerator"
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(page["entries"][0]["id"], entry_id)
+        self.assertEqual(page["entries"][0]["content_kind"], "news")
+        with urlopen(self.base_url + "/") as response:
+            dashboard = response.read().decode()
+        self.assertIn('data-kind="news"', dashboard)
+        self.assertIn('id="profile-dialog"', dashboard)
 
 
 if __name__ == "__main__":

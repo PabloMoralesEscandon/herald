@@ -79,6 +79,9 @@ class HeraldRequestHandler(BaseHTTPRequestHandler):
             if profile is None:
                 self._send_error(HTTPStatus.NOT_FOUND, "Profile not found")
             else:
+                profile["threshold_mode"] = self.server.database.get_setting(
+                    f"relevance.threshold_mode.{profile['id']}", "auto"
+                )
                 self._send_json(profile)
             return
         if parsed.path == "/api/settings/obsidian":
@@ -117,6 +120,9 @@ class HeraldRequestHandler(BaseHTTPRequestHandler):
         except (TypeError, ValueError) as error:
             self._send_error(HTTPStatus.BAD_REQUEST, str(error))
             return
+        profile["threshold_mode"] = self.server.database.get_setting(
+            f"relevance.threshold_mode.{profile['id']}", "auto"
+        )
         job = self.server.service.relevance.start(profile_kind)
         self._send_json({"profile": profile, "rescore": job})
 
@@ -187,6 +193,7 @@ class HeraldRequestHandler(BaseHTTPRequestHandler):
         category = query.get("category", [None])[0] or None
         content_kind = query.get("kind", [None])[0] or None
         relevance_bucket = query.get("bucket", [None])[0] or None
+        search = query.get("q", [None])[0] or None
         cursor = query.get("cursor", [None])[0] or None
         try:
             limit = int(query.get("limit", ["100"])[0])
@@ -200,6 +207,7 @@ class HeraldRequestHandler(BaseHTTPRequestHandler):
                 content_kind=content_kind,
                 relevance_bucket=relevance_bucket,
                 profile_id=int(profile["id"]) if profile else None,
+                search=search,
                 cursor=cursor,
                 limit=limit,
             )

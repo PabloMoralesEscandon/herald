@@ -670,6 +670,7 @@ class Database:
         content_kind: str | None = None,
         relevance_bucket: str | None = None,
         profile_id: int | None = None,
+        search: str | None = None,
         cursor: str | None = None,
         limit: int | None = 100,
     ) -> list[dict[str, Any]]:
@@ -689,6 +690,14 @@ class Database:
                 raise ValueError(f"Unknown content kind: {content_kind}")
             clauses.append("entries.content_kind = ?")
             params.append(content_kind)
+        if search and search.strip():
+            term = f"%{search.strip()}%"
+            clauses.append(
+                "(entries.title LIKE ? OR entries.author LIKE ? "
+                "OR entries.summary LIKE ? OR entries.content LIKE ? "
+                "OR sources.title LIKE ? OR sources.category LIKE ?)"
+            )
+            params.extend([term] * 6)
         ranking_join = ""
         ranking_fields = ""
         ranked_order = False
@@ -835,6 +844,22 @@ class Database:
                     )
                 }
             )
+            workspaces = {
+                kind: {
+                    "total": content_kinds[kind],
+                    "statuses": {status: 0 for status in sorted(VALID_STATUSES)},
+                }
+                for kind in sorted(VALID_CONTENT_KINDS)
+            }
+            for row in connection.execute(
+                """
+                SELECT content_kind, status, COUNT(*) AS count
+                FROM entries GROUP BY content_kind, status
+                """
+            ):
+                workspaces[str(row["content_kind"])]["statuses"][str(row["status"])] = int(
+                    row["count"]
+                )
             relevance = {
                 kind: {"pending": content_kinds[kind], "relevant": 0, "filtered": 0}
                 for kind in sorted(VALID_CONTENT_KINDS)
@@ -867,6 +892,7 @@ class Database:
             "categories": categories,
             "content_kinds": content_kinds,
             "relevance": relevance,
+            "workspaces": workspaces,
         }
 
     def set_status(self, entry_id: int, status: str) -> bool:
