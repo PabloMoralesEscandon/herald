@@ -181,6 +181,53 @@ class IngestionServiceTests(unittest.TestCase):
             len(NEWS_SOURCES),
         )
 
+    def test_local_backfill_preserves_status_and_is_idempotent(self) -> None:
+        paper_source = self.database.add_source(
+            "Legacy arXiv", "https://example.org/papers.xml", "Machine Learning"
+        )
+        paper_id, _ = self.database.upsert_entry(
+            source_id=paper_source,
+            guid="legacy-paper",
+            url="https://arxiv.org/abs/2608.01234v2",
+            title="Reinforcement Learning Accelerator Design",
+            content="A digital circuit for efficient policy optimization.",
+        )
+        self.database.set_status(paper_id, "kept")
+        news_source = self.database.add_source(
+            "Official News",
+            "https://example.org/news.xml",
+            "Company",
+            content_kind="news",
+        )
+        news_id, _ = self.database.upsert_entry(
+            source_id=news_source,
+            guid="legacy-news",
+            url="https://example.org/launch",
+            title="Company launches an inference chip",
+            content_kind="news",
+        )
+        self.database.set_status(news_id, "discarded")
+        service = HeraldService(self.database)
+
+        first = service.backfill_existing(sync_obsidian=False)
+        second = service.backfill_existing(sync_obsidian=False)
+
+        self.assertEqual(self.database.get_entry(paper_id)["status"], "kept")
+        self.assertEqual(self.database.get_entry(news_id)["status"], "discarded")
+        self.assertEqual(self.database.get_entry(paper_id)["canonical_key"], "arxiv:2608.01234")
+        self.assertEqual(
+            self.database.list_paper_identifiers(paper_id)[0]["value"],
+            "2608.01234",
+        )
+        self.assertTrue(self.database.list_entry_keywords(paper_id))
+        self.assertTrue(self.database.list_entry_keywords(news_id))
+        self.assertEqual(first["identifiers_added"], 1)
+        self.assertEqual(second["identifiers_added"], 0)
+        self.assertEqual(second["canonical_keys_added"], 0)
+        self.assertEqual(second["keywords_added"], 0)
+        self.assertEqual(first["rankings"]["paper"]["scored"], 1)
+        self.assertEqual(first["rankings"]["news"]["scored"], 1)
+
     def test_refresh_is_idempotent(self) -> None:
         source_id = self.database.add_source(
             "Systems Lab", "https://example.org/rss", "Operating Systems"

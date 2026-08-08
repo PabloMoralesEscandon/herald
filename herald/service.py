@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import http.client
+import threading
 import urllib.error
 import urllib.request
 from dataclasses import asdict, dataclass
@@ -16,7 +17,14 @@ from .feeds import (
     parse_feed,
 )
 from .obsidian import ObsidianConflictError, ObsidianExporter
-from .papers import PaperImporter, PaperImportError, PaperImportResult
+from .papers import (
+    PaperImporter,
+    PaperImportError,
+    PaperImportResult,
+    extract_keywords,
+    normalize_arxiv_id,
+    normalize_doi,
+)
 from .relevance import RelevanceCoordinator, RelevanceEngine
 from .sources import CURATED_SOURCES
 from .storage import Database
@@ -126,6 +134,7 @@ class HeraldService:
         paper_importer: PaperImporter | None = None,
         default_vault_path: str | Path | None = None,
         archive_root: str | Path | None = None,
+        auto_enrich_kept: bool = False,
         now: Callable[[], datetime] | None = None,
     ):
         self.database = database
@@ -141,6 +150,9 @@ class HeraldService:
         self.archive_root = Path(
             archive_root or database.path.parent / "obsidian-archive"
         ).expanduser().resolve()
+        self.auto_enrich_kept = auto_enrich_kept
+        self._enrichment_lock = threading.Lock()
+        self._enriching_entries: set[int] = set()
         self.now = now or (lambda: datetime.now(UTC))
 
     @property
@@ -166,6 +178,78 @@ class HeraldService:
                 content_kind=source.content_kind,
             )
         return sum(source.url not in existing for source in CURATED_SOURCES)
+
+    def backfill_existing(self, *, sync_obsidian: bool = True) -> dict[str, object]:
+        """Upgrade existing rows locally without changing any reading status."""
+        entries = self.database.list_entries(limit=None)
+        identifiers_added = 0
+        canonical_keys_added = 0
+        keywords_added = 0
+        for entry in entries:
+            entry_id = int(entry["id"])
+            content_kind = str(entry.get("content_kind") or "paper")
+            if not self.database.list_entry_keywords(entry_id):
+                keywords = extract_keywords(
+                    str(entry.get("title") or ""), str(entry.get("content") or "")
+                )
+                self.database.replace_entry_keywords(entry_id, keywords)
+                keywords_added += len(keywords)
+            if content_kind != "paper":
+                continue
+            scheme = ""
+            value = ""
+            url = str(entry.get("canonical_url") or entry.get("url") or "")
+            parts = urlsplit(url)
+            try:
+                if parts.hostname in {"arxiv.org", "www.arxiv.org", "export.arxiv.org"}:
+                    path_value = parts.path
+                    for prefix in ("/abs/", "/pdf/"):
+                        if path_value.startswith(prefix):
+                            path_value = path_value[len(prefix):]
+                            break
+                    value = normalize_arxiv_id(path_value)
+                    scheme = "arxiv"
+                elif parts.hostname in {"doi.org", "dx.doi.org"}:
+                    value = normalize_doi(parts.path.lstrip("/"))
+                    scheme = "doi"
+            except ValueError:
+                scheme = ""
+                value = ""
+            if not scheme:
+                continue
+            canonical_key = f"{scheme}:{value}"
+            if not entry.get("canonical_key"):
+                self.database.update_entry_metadata(
+                    entry_id,
+                    title=str(entry.get("title") or ""),
+                    canonical_key=canonical_key,
+                )
+                canonical_keys_added += 1
+            known = {
+                (str(item["scheme"]), str(item["value"]))
+                for item in self.database.list_paper_identifiers(entry_id)
+            }
+            if (scheme, value) not in known:
+                self.database.add_paper_identifier(
+                    entry_id, scheme, value, is_primary=True
+                )
+                identifiers_added += 1
+
+        references_linked = self.database.reconcile_paper_references()
+        rankings = {
+            kind: self.relevance.engine.rescore(kind) for kind in ("paper", "news")
+        }
+        if sync_obsidian:
+            self.reconcile_obsidian()
+        return {
+            "entries": len(entries),
+            "identifiers_added": identifiers_added,
+            "canonical_keys_added": canonical_keys_added,
+            "keywords_added": keywords_added,
+            "references_linked": references_linked,
+            "rankings": rankings,
+            "obsidian_reconciled": sync_obsidian,
+        }
 
     def add_source(
         self,
@@ -627,6 +711,7 @@ class HeraldService:
                 self.export_entry(entry_id)
             except (OSError, ValueError, ObsidianConflictError):
                 pass
+            self._start_kept_enrichment(updated)
         elif previous["status"] == "kept":
             try:
                 self._archive_entry(updated)
@@ -673,11 +758,61 @@ class HeraldService:
                         self.export_entry(int(entry["id"]))
                     except (OSError, ValueError, ObsidianConflictError):
                         continue
+                self._start_kept_enrichment(entry)
             elif export is not None and export["state"] in {"synced", "archive_pending"}:
                 try:
                     self._archive_entry(entry)
                 except (OSError, ValueError, ObsidianConflictError):
                     continue
+
+    def _start_kept_enrichment(self, entry: dict[str, object]) -> None:
+        if not self.auto_enrich_kept or entry.get("content_kind") != "paper":
+            return
+        if entry.get("enrichment_status") == "enriched":
+            return
+        url = str(entry.get("canonical_url") or entry.get("url") or "")
+        host = (urlsplit(url).hostname or "").lower()
+        if host not in {
+            "arxiv.org",
+            "www.arxiv.org",
+            "export.arxiv.org",
+            "doi.org",
+            "dx.doi.org",
+            "semanticscholar.org",
+            "www.semanticscholar.org",
+        }:
+            return
+        entry_id = int(entry["id"])
+        with self._enrichment_lock:
+            if entry_id in self._enriching_entries:
+                return
+            self._enriching_entries.add(entry_id)
+
+        def enrich() -> None:
+            try:
+                try:
+                    self.paper_importer.import_paper(url)
+                except PaperImportError as error:
+                    self.database.set_enrichment_state(
+                        entry_id, "failed", error=str(error)
+                    )
+                    return
+                current = self.database.get_entry(entry_id)
+                if current is None or current["status"] != "kept":
+                    return
+                try:
+                    self.export_entry(entry_id)
+                except (OSError, ValueError, ObsidianConflictError):
+                    pass
+            finally:
+                with self._enrichment_lock:
+                    self._enriching_entries.discard(entry_id)
+
+        threading.Thread(
+            target=enrich,
+            name=f"herald-enrich-{entry_id}",
+            daemon=True,
+        ).start()
 
     def export_kept(self) -> list[Path]:
         kept = self.database.list_entries(status="kept", limit=None)

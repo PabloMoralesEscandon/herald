@@ -6,7 +6,7 @@ const state = {
   entries: [],
   sources: [],
   status: "unread",
-  bucket: null,
+  bucket: "relevant",
   category: "all",
   search: "",
   selectedId: null,
@@ -91,11 +91,8 @@ async function api(path, options = {}) {
 
 function entriesPath(cursor = null) {
   const params = new URLSearchParams({ kind: state.activeKind, limit: String(PAGE_SIZE) });
-  if (state.bucket) {
-    params.set("bucket", state.bucket);
-    params.set("status", "unread");
-  }
-  else if (state.status !== "all") params.set("status", state.status);
+  if (state.bucket) params.set("bucket", state.bucket);
+  if (state.status !== "all") params.set("status", state.status);
   if (state.category !== "all") params.set("category", state.category);
   if (state.search) params.set("q", state.search);
   if (cursor) params.set("cursor", cursor);
@@ -242,7 +239,7 @@ function renderNavigation() {
     button.setAttribute("aria-selected", String(active));
   });
   elements.statusNav.querySelectorAll("[data-status]").forEach((button) => {
-    button.classList.toggle("active", !state.bucket && button.dataset.status === state.status);
+    button.classList.toggle("active", button.dataset.status === state.status);
   });
   elements.relevanceNav.querySelectorAll("[data-bucket]").forEach((button) => {
     button.classList.toggle("active", button.dataset.bucket === state.bucket);
@@ -260,11 +257,11 @@ function renderChrome() {
 
 function renderSourceHealth() {
   const sources = state.sources.filter((source) => (source.content_kind || "paper") === state.activeKind);
-  const failing = sources.filter((source) => source.last_error);
+  const failing = sources.filter((source) => source.refresh_error);
   setText("#source-health-summary", failing.length ? `${failing.length} issue${failing.length === 1 ? "" : "s"}` : `${sources.length} healthy`);
   document.querySelector("#source-health-list").innerHTML = sources.length
-    ? sources.map((source) => `<div class="source-health-item ${source.last_error ? "error" : ""}">
-        <span>${escapeHtml(source.title)}</span><small>${source.last_error ? escapeHtml(source.last_error) : source.last_fetched_at ? `Updated ${escapeHtml(relativeDate(source.last_fetched_at))}` : "Awaiting first refresh"}</small>
+    ? sources.map((source) => `<div class="source-health-item ${source.refresh_error ? "error" : ""}">
+        <span>${escapeHtml(source.title)}</span><small>${source.refresh_error ? escapeHtml(source.refresh_error) : source.refresh_succeeded_at ? `Updated ${escapeHtml(relativeDate(source.refresh_succeeded_at))}` : "Awaiting first refresh"}</small>
       </div>`).join("")
     : "<p>No sources configured.</p>";
 }
@@ -519,7 +516,7 @@ async function actOnSelected(action) {
       : action === "discard" ? "Moved to discarded" : action === "read" ? "Marked as read" : "Returned to unread";
     showToast(message, action === "keep" && !["synced", "pending"].includes(syncState));
     await refreshStats();
-    if (!state.bucket && state.status !== "all" && updated.status !== state.status) {
+    if (state.status !== "all" && updated.status !== state.status) {
       state.entries = state.entries.filter((item) => item.id !== updated.id);
       clearSelection();
       renderList();
@@ -550,7 +547,6 @@ function changeStatusFilter(event) {
   const button = event.target.closest("[data-status]");
   if (!button) return;
   state.status = button.dataset.status;
-  state.bucket = null;
   state.search = "";
   elements.search.value = "";
   loadData({ preserveSelection: false });
@@ -561,7 +557,7 @@ function changeWorkspace(event) {
   if (!button || button.dataset.kind === state.activeKind) return;
   state.activeKind = button.dataset.kind;
   state.status = "unread";
-  state.bucket = null;
+  state.bucket = "relevant";
   state.category = "all";
   state.search = "";
   elements.search.value = "";
@@ -593,7 +589,7 @@ function setCategory(category) {
 
 function clearFilters() {
   state.status = "unread";
-  state.bucket = null;
+  state.bucket = "relevant";
   state.category = "all";
   state.search = "";
   elements.search.value = "";
@@ -698,14 +694,16 @@ async function importPaper(event) {
     resultElement.hidden = false;
     resultElement.className = "form-result success";
     resultElement.textContent = result.created ? `Added “${result.entry.title}” to Unread.` : `“${result.entry.title}” is already in Herald.`;
+    state.activeKind = "paper";
     state.status = "unread";
-    state.bucket = null;
+    state.bucket = "relevant";
     state.category = "all";
     state.search = "";
     elements.search.value = "";
     await loadData({ preserveSelection: false });
     const imported = state.entries.find((entry) => entry.id === result.entry.id);
     if (imported) await selectEntry(imported.id);
+    else await previewDetachedEntry(result.entry.id);
     showToast(result.created ? "Paper added to Unread" : "Paper already exists; opened its preview");
   } catch (error) {
     resultElement.hidden = false;

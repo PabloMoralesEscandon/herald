@@ -29,7 +29,6 @@ NEWS_INTERESTS = [
 ]
 DEFAULT_PROFILES = {"paper": PAPER_INTERESTS, "news": NEWS_INTERESTS}
 SELECTIVITY_PERCENTILES = {"broad": 0.70, "balanced": 0.90, "focused": 0.95}
-SELECTIVITY_FLOORS = {"broad": 25.0, "balanced": 40.0, "focused": 55.0}
 TOKEN_RE = re.compile(r"[a-z0-9]+(?:[-'][a-z0-9]+)?")
 STOP_WORDS = {
     "a", "an", "and", "are", "as", "at", "be", "by", "for", "from",
@@ -469,10 +468,10 @@ class RelevanceEngine:
     ) -> tuple[float, str]:
         scores = [draft.score for draft in drafts if not draft.forced_filtered]
         selectivity = str(profile["selectivity"])
-        cold = max(
-            SELECTIVITY_FLOORS[selectivity],
-            _percentile(scores, SELECTIVITY_PERCENTILES[selectivity]),
-        )
+        # Calibrate to the observed distribution. A fixed floor can empty a
+        # perfectly useful offline TF-IDF queue because its cosine scores are
+        # naturally lower than dense embedding scores.
+        cold = _percentile(scores, SELECTIVITY_PERCENTILES[selectivity])
         current = float(profile["threshold"]) if profile["threshold"] is not None else cold
         configured_mode = self.database.get_setting(
             f"relevance.threshold_mode.{profile['id']}", "auto"

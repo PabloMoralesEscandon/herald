@@ -587,6 +587,7 @@ def make_server(
             relevance=relevance,
             default_vault_path=settings.vault_path,
             archive_root=settings.data_dir / "obsidian-archive",
+            auto_enrich_kept=True,
         )
     else:
         active_service = service

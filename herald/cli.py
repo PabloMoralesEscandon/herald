@@ -21,6 +21,14 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("list", help="Print current inbox entries")
     subparsers.add_parser("sources", help="Print configured RSS and Atom sources")
     subparsers.add_parser("seed", help="Add Herald's curated research sources")
+    backfill = subparsers.add_parser(
+        "backfill", help="Backfill identifiers, keywords, rankings, and kept notes"
+    )
+    backfill.add_argument(
+        "--no-obsidian",
+        action="store_true",
+        help="Skip kept-note reconciliation for this run",
+    )
     subparsers.add_parser("refresh", help="Fetch all enabled sources")
     summarize = subparsers.add_parser("summarize", help="Summarize one entry")
     summarize.add_argument("entry_id", type=int)
@@ -61,6 +69,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "seed":
         created = service.seed_curated_sources()
         print(f"Added {created} curated sources")
+        return 0
+    if args.command == "backfill":
+        print(
+            json.dumps(
+                service.backfill_existing(sync_obsidian=not args.no_obsidian),
+                indent=2,
+            )
+        )
         return 0
     if args.command == "refresh":
         results = service.refresh_all()

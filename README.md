@@ -26,6 +26,11 @@ Markdown contains frontmatter, summary, feed text, original URL, author,
 publication date, and a personal notes section. Herald updates only its marked
 generated blocks, so custom properties and personal notes survive every sync.
 
+The dashboard opens on **Relevant + Unread**, so the inbox contains only the
+strongest current matches. Switch to **Filtered** to recover everything below
+the adaptive threshold; filtering never deletes or discards an entry. Papers
+and News have separate workspaces, profiles, filters, counts, and source health.
+
 ## Fetch real sources
 
 `init` seeds 11 arXiv feeds covering chip design and digital circuits,
@@ -54,6 +59,12 @@ using a DOI, arXiv ID or URL, Semantic Scholar URL, or public paper page. Herald
 enriches the paper with free Semantic Scholar/Crossref metadata, extracts local
 keywords, and stores it as unread. Provider responses are cached in the local
 database; no API key or paid service is required.
+
+Keeping a recognized arXiv, DOI, or Semantic Scholar paper returns immediately,
+creates its baseline note, and starts metadata enrichment in the background.
+When free provider metadata arrives, Herald adds identifiers, keywords, topics,
+and outgoing citations, then safely resynchronizes the note. Provider failure
+does not undo Keep or remove the baseline note.
 
 ## Data and Obsidian
 
@@ -104,6 +115,35 @@ Configuration environment variables:
 - `HERALD_OLLAMA_MODEL` — local model name (default `qwen2.5:3b`)
 - `HERALD_OLLAMA_EMBEDDING_MODEL` — local relevance model (default
   `embeddinggemma`)
+
+To enable the preferred local models:
+
+```bash
+ollama pull embeddinggemma
+ollama pull qwen2.5:3b
+ollama serve
+```
+
+`GET /api/relevance/health` reports the preferred embedding provider, the
+always-available TF-IDF fallback, and each Paper/News scoring job. Summary
+provenance is shown on every preview and exported note, so Ollama output is
+never confused with the non-AI fallback.
+
+## Upgrade an existing Herald database
+
+Herald applies additive SQLite schema migrations every time it starts. Existing
+read, kept, and discarded states are never reset. After upgrading, run:
+
+```bash
+python -m herald.cli backfill
+```
+
+This offline-safe command derives identifiers from existing arXiv/DOI URLs,
+extracts missing keywords, reconciles known citation edges, rebuilds both
+relevance indexes, and safely reconciles kept Obsidian notes. It is idempotent.
+Use `--no-obsidian` to inspect or rebuild database metadata without touching a
+vault. Legacy notes are migrated only when Herald can identify their generated
+structure; ambiguous files become conflicts and are not overwritten.
 
 ## Tests
 
