@@ -6,8 +6,8 @@
     <meta name="color-scheme" content="light">
     <meta name="theme-color" content="#f4f1e8">
     <title>Herald — Technical reading inbox</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20">
-    <script src="/static/app.js?v=22" defer></script>
+    <link rel="stylesheet" href="/static/styles.css?v=21">
+    <script src="/static/app.js?v=23" defer></script>
   </head>
   <body>
     <div class="app-shell">
@@ -84,6 +84,7 @@
             <div class="pane-actions">
               <button class="quiet-button" id="profile-button" type="button" title="Tune relevance">Tune filter</button>
               <button class="primary-button" id="import-button" type="button">+ Add paper</button>
+              <button class="source-button" id="source-button" type="button">+ Add source</button>
               <label class="select-wrap">
                 <span class="sr-only">Filter category</span>
                 <select id="category-select"><option value="all">All topics</option></select>
@@ -233,6 +234,41 @@
         <footer class="modal-actions">
           <button class="quiet-button" type="button" data-close-dialog="import-dialog">Cancel</button>
           <button id="submit-import" class="primary-button" type="submit">Add to Herald</button>
+        </footer>
+      </form>
+    </dialog>
+    <dialog id="source-dialog" class="modal compact-modal" aria-labelledby="source-dialog-title">
+      <form id="source-form" class="modal-card">
+        <header class="modal-header">
+          <div><p class="eyebrow" id="source-kind-label">Paper source</p><h2 id="source-dialog-title">Add a source</h2></div>
+          <button class="modal-close" type="button" data-close-dialog="source-dialog" aria-label="Close">×</button>
+        </header>
+        <p class="modal-intro" id="source-dialog-help">Add an RSS or Atom feed, or a website that advertises its feed. Herald will discover the feed when it first refreshes.</p>
+        <label class="field-label" for="source-title">Source name
+          <input id="source-title" name="title" type="text" required placeholder="NVIDIA Developer Blog" autocomplete="organization">
+        </label>
+        <label class="field-label" for="source-url">Feed or website URL
+          <input id="source-url" name="url" type="url" required placeholder="https://example.com/feed.xml" autocomplete="url" inputmode="url" spellcheck="false" aria-describedby="source-dialog-help">
+        </label>
+        <div class="field-grid">
+          <label class="field-label" for="source-category">Category
+            <input id="source-category" name="category" type="text" required placeholder="Chip Design" autocomplete="off">
+          </label>
+          <label class="field-label" for="source-content-kind">Workspace
+            <select id="source-content-kind" name="content_kind" required>
+              <option value="paper">Papers</option>
+              <option value="news">News</option>
+            </select>
+          </label>
+        </div>
+        <label class="check-field" for="source-refresh-now">
+          <input id="source-refresh-now" name="refresh_now" type="checkbox" checked>
+          <span><strong>Fetch entries now</strong><small>Refresh all enabled feeds after adding this source.</small></span>
+        </label>
+        <p id="source-result" class="form-result" role="alert" hidden></p>
+        <footer class="modal-actions">
+          <button class="quiet-button" type="button" data-close-dialog="source-dialog">Cancel</button>
+          <button id="submit-source" class="primary-button" type="submit">Add source</button>
         </footer>
       </form>
     </dialog>

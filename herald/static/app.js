@@ -45,6 +45,7 @@ document.addEventListener("DOMContentLoaded", () => {
     loadMore: document.querySelector("#load-more"),
     profileDialog: document.querySelector("#profile-dialog"),
     importDialog: document.querySelector("#import-dialog"),
+    sourceDialog: document.querySelector("#source-dialog"),
   });
 
   document.querySelector("#today").innerHTML = formatToday();
@@ -66,9 +67,11 @@ document.addEventListener("DOMContentLoaded", () => {
   document.querySelector("#export-action").addEventListener("click", exportSelected);
   document.querySelector("#profile-button").addEventListener("click", openProfile);
   document.querySelector("#import-button").addEventListener("click", openImport);
+  document.querySelector("#source-button").addEventListener("click", openSource);
   document.querySelector("#profile-form").addEventListener("submit", saveProfile);
   document.querySelector("#rescore-button").addEventListener("click", rescorePapers);
   document.querySelector("#import-form").addEventListener("submit", importPaper);
+  document.querySelector("#source-form").addEventListener("submit", addSource);
   document.querySelector("#reference-list").addEventListener("click", addReferenceFromEvent);
   document.querySelectorAll("[data-close-dialog]").forEach((button) => button.addEventListener("click", () => {
     document.querySelector(`#${button.dataset.closeDialog}`).close();
@@ -679,6 +682,75 @@ function openImport() {
   document.querySelector("#import-result").hidden = true;
   elements.importDialog.showModal();
   setTimeout(() => document.querySelector("#paper-input").focus(), 0);
+}
+
+function openSource() {
+  const form = document.querySelector("#source-form");
+  form.reset();
+  document.querySelector("#source-content-kind").value = state.activeKind;
+  document.querySelector("#source-category").value = state.category === "all" ? "" : state.category;
+  const result = document.querySelector("#source-result");
+  result.hidden = true;
+  result.textContent = "";
+  setText("#source-kind-label", `${state.activeKind === "paper" ? "Paper" : "News"} source`);
+  elements.sourceDialog.showModal();
+  setTimeout(() => document.querySelector("#source-title").focus(), 0);
+}
+
+async function addSource(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = document.querySelector("#submit-source");
+  const resultElement = document.querySelector("#source-result");
+  const refreshNow = document.querySelector("#source-refresh-now").checked;
+  const payload = {
+    title: document.querySelector("#source-title").value.trim(),
+    url: document.querySelector("#source-url").value.trim(),
+    category: document.querySelector("#source-category").value.trim(),
+    content_kind: document.querySelector("#source-content-kind").value,
+  };
+  button.disabled = true;
+  button.textContent = "Adding…";
+  resultElement.hidden = true;
+  let savedSource = null;
+  try {
+    const source = await api("/api/sources", { method: "POST", body: JSON.stringify(payload) });
+    savedSource = source;
+    state.sources = [...state.sources.filter((item) => item.id !== source.id), source];
+    renderCategories();
+    renderSourceHealth();
+
+    if (!refreshNow) {
+      elements.sourceDialog.close();
+      showToast(`${source.title} added; refresh when you are ready`);
+      return;
+    }
+
+    button.textContent = "Fetching entries…";
+    const refresh = await api("/api/refresh", { method: "POST", body: "{}" });
+    await loadData({ preserveSelection: true });
+    const sourceRefresh = refresh.sources?.find((item) => item.source_id === source.id);
+    if (sourceRefresh?.error) {
+      resultElement.hidden = false;
+      resultElement.className = "form-result error";
+      resultElement.textContent = `Source added, but its first refresh failed: ${sourceRefresh.error}`;
+      showToast("Source saved; first refresh needs attention", true);
+      return;
+    }
+    elements.sourceDialog.close();
+    const created = sourceRefresh?.created ?? 0;
+    showToast(`${source.title} added and refreshed · ${created} new ${created === 1 ? "entry" : "entries"}`);
+  } catch (error) {
+    resultElement.hidden = false;
+    resultElement.className = "form-result error";
+    resultElement.textContent = savedSource
+      ? `Source added, but refresh failed: ${error.message}`
+      : error.message;
+  } finally {
+    button.disabled = false;
+    button.textContent = "Add source";
+    if (!elements.sourceDialog.open) form.reset();
+  }
 }
 
 async function importPaper(event) {

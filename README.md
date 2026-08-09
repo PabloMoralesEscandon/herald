@@ -50,9 +50,11 @@ records per-source refresh health. The initial News refresh imports only the
 latest 30 days; later refreshes ingest every newly observed announcement.
 
 To add another RSS or Atom feed, or a website exposing a standard feed
-autodiscovery link, use `POST /api/sources` as documented in
-[`docs/API.md`](docs/API.md). To inspect or automate Herald from the command
-line, run `python -m herald.cli --help`.
+autodiscovery link, use **Add source** in either dashboard workspace. Choose
+whether to fetch its entries immediately; the source and its category appear as
+soon as it is saved. Automation can use `POST /api/sources` as documented in
+[`docs/API.md`](docs/API.md). To inspect Herald from the command line, run
+`python -m herald.cli --help`.
 
 Papers that are not in a feed can be imported through `POST /api/import/paper`
 using a DOI, arXiv ID or URL, Semantic Scholar URL, or public paper page. Herald

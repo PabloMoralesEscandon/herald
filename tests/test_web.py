@@ -72,8 +72,8 @@ class WebTests(unittest.TestCase):
             html = response.read().decode()
         self.assertEqual(response.status, 200)
         self.assertIn("Herald", html)
-        self.assertIn("/static/app.js?v=22", html)
-        self.assertIn("/static/styles.css?v=20", html)
+        self.assertIn("/static/app.js?v=23", html)
+        self.assertIn("/static/styles.css?v=21", html)
         self.assertIn('id="reader-pdf"', html)
         self.assertIn('id="reader-content" class="reader-content" hidden', html)
         self.assertNotIn('id="reader-placeholder"', html)
@@ -92,6 +92,10 @@ class WebTests(unittest.TestCase):
         self.assertIn('data-kind="paper" role="tab" aria-selected="true"', html)
         self.assertIn('data-kind="news" role="tab" aria-selected="false"', html)
         self.assertIn('id="source-health-list"', html)
+        self.assertIn('id="source-button"', html)
+        self.assertIn('id="source-dialog"', html)
+        self.assertIn('id="source-content-kind"', html)
+        self.assertIn('id="source-refresh-now"', html)
 
         with urlopen(self.base_url + "/static/styles.css") as response:
             styles = response.read().decode()
@@ -104,6 +108,7 @@ class WebTests(unittest.TestCase):
             self.assertIn(".workspace-switch", styles)
             self.assertIn(".news-card", styles)
             self.assertIn(".source-health", styles)
+            self.assertIn(".check-field", styles)
 
         with urlopen(self.base_url + "/static/app.js") as response:
             script = response.read().decode()
@@ -125,6 +130,10 @@ class WebTests(unittest.TestCase):
         self.assertIn('relevanceReasons(ranking).slice(0, 3)', script)
         self.assertIn('elements.kindNav.addEventListener("click", changeWorkspace)', script)
         self.assertIn('state.activeKind === "paper" ? api(`/api/entries/${id}/references`)', script)
+        self.assertIn('document.querySelector("#source-button").addEventListener("click", openSource)', script)
+        self.assertIn('document.querySelector("#source-content-kind").value = state.activeKind', script)
+        self.assertIn('api("/api/sources", { method: "POST"', script)
+        self.assertIn('const refresh = await api("/api/refresh"', script)
 
     def test_news_workspace_search_counts_and_profile_contract(self) -> None:
         source_id = self.database.add_source(
@@ -370,6 +379,28 @@ class WebTests(unittest.TestCase):
         self.assertIn("paper or news", invalid["error"])
         _, sources = self.request("/api/sources")
         self.assertEqual(len(sources), 3)
+
+    def test_add_source_validates_required_fields_and_url(self) -> None:
+        missing_status, missing = self.request(
+            "/api/sources",
+            method="POST",
+            payload={"title": "Missing fields"},
+        )
+        self.assertEqual(missing_status, 400)
+        self.assertIn("title, url, and category are required", missing["error"])
+
+        invalid_status, invalid = self.request(
+            "/api/sources",
+            method="POST",
+            payload={
+                "title": "Invalid URL",
+                "url": "not-a-feed",
+                "category": "Company",
+                "content_kind": "news",
+            },
+        )
+        self.assertEqual(invalid_status, 400)
+        self.assertIn("HTTP(S)", invalid["error"])
 
     def test_imports_a_paper_and_reports_idempotent_repeats(self) -> None:
         metadata = {
