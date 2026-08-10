@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
+from pathlib import Path
 from typing import Sequence
 
 from .config import Settings
@@ -19,8 +21,17 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("init", help="Create the local database and vault")
     subparsers.add_parser("demo", help="Load deterministic sample articles")
     subparsers.add_parser("list", help="Print current inbox entries")
-    subparsers.add_parser("sources", help="Print configured RSS and Atom sources")
-    subparsers.add_parser("seed", help="Add Herald's curated research sources")
+    sources = subparsers.add_parser(
+        "sources", help="List, export, or import RSS and Atom source configuration"
+    )
+    sources.add_argument(
+        "sources_action", nargs="?", choices=("export", "import"),
+        help="Export portable JSON or import it without transferring reading data",
+    )
+    sources.add_argument(
+        "path", nargs="?", help="JSON path; export defaults to stdout and '-' means stdin/stdout"
+    )
+    subparsers.add_parser("seed", help="Add Herald's packaged source catalog")
     backfill = subparsers.add_parser(
         "backfill", help="Backfill identifiers, keywords, rankings, and kept notes"
     )
@@ -64,7 +75,36 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(json.dumps(database.list_entries(), indent=2))
         return 0
     if args.command == "sources":
-        print(json.dumps(service.list_sources(), indent=2))
+        if args.sources_action is None:
+            print(json.dumps(service.list_sources(), indent=2))
+            return 0
+        if args.sources_action == "export":
+            document = json.dumps(service.export_sources(), indent=2, ensure_ascii=False) + "\n"
+            if not args.path or args.path == "-":
+                print(document, end="")
+            else:
+                destination = Path(args.path).expanduser()
+                destination.write_text(document, encoding="utf-8")
+                print(f"Exported {len(service.list_sources())} sources to {destination}")
+            return 0
+        if not args.path:
+            print("herald sources import requires a JSON path (or '-' for stdin)", file=sys.stderr)
+            return 2
+        try:
+            if args.path == "-":
+                document = sys.stdin.read(1_000_001)
+            else:
+                source_path = Path(args.path).expanduser()
+                if source_path.stat().st_size > 1_000_000:
+                    raise ValueError("Source manifest exceeds the 1 MB limit")
+                document = source_path.read_text(encoding="utf-8")
+            if len(document.encode("utf-8")) > 1_000_000:
+                raise ValueError("Source manifest exceeds the 1 MB limit")
+            result = service.import_sources(json.loads(document))
+        except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as error:
+            print(f"Could not import sources: {error}", file=sys.stderr)
+            return 2
+        print(json.dumps(result, indent=2))
         return 0
     if args.command == "seed":
         created = service.seed_curated_sources()

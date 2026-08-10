@@ -13,6 +13,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from herald.storage import Database
+from herald.sources import CURATED_SOURCES
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -43,9 +44,9 @@ class EndToEndWorkflowTests(unittest.TestCase):
         self.server: subprocess.Popen[str] | None = None
         self.addCleanup(self._stop_server)
 
-    def _run_cli(self, command: str) -> subprocess.CompletedProcess[str]:
+    def _run_cli(self, *command: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
-            [sys.executable, "-m", "herald.cli", command],
+            [sys.executable, "-m", "herald.cli", *command],
             cwd=PROJECT_ROOT,
             env=self.environment,
             text=True,
@@ -116,7 +117,7 @@ class EndToEndWorkflowTests(unittest.TestCase):
         initialized = self._run_cli("init")
         demonstrated = self._run_cli("demo")
 
-        self.assertIn("15 sources added", initialized.stdout)
+        self.assertIn(f"{len(CURATED_SOURCES)} sources added", initialized.stdout)
         self.assertIn("Loaded 2 demo entries", demonstrated.stdout)
         self.assertTrue((self.data_dir / "herald.db").is_file())
 
@@ -161,6 +162,21 @@ class EndToEndWorkflowTests(unittest.TestCase):
             exported["entry"]["exported_path"],
             markdown_path.relative_to(self.data_dir / "vault").as_posix(),
         )
+
+    def test_source_manifest_cli_round_trip(self) -> None:
+        self._run_cli("init")
+        destination = self.data_dir / "portable-sources.json"
+
+        exported = self._run_cli("sources", "export", str(destination))
+        manifest = json.loads(destination.read_text(encoding="utf-8"))
+        imported = self._run_cli("sources", "import", str(destination))
+        result = json.loads(imported.stdout)
+
+        self.assertIn(f"Exported {len(CURATED_SOURCES)} sources", exported.stdout)
+        self.assertEqual(manifest["format"], "herald.sources")
+        self.assertEqual(result["imported"], len(CURATED_SOURCES))
+        self.assertEqual(result["unchanged"], len(CURATED_SOURCES))
+        self.assertEqual(result["created"], 0)
 
     def test_news_workspace_runs_from_clean_install(self) -> None:
         self._run_cli("init")

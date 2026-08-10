@@ -72,8 +72,8 @@ class WebTests(unittest.TestCase):
             html = response.read().decode()
         self.assertEqual(response.status, 200)
         self.assertIn("Herald", html)
-        self.assertIn("/static/app.js?v=24", html)
-        self.assertIn("/static/styles.css?v=21", html)
+        self.assertIn("/static/app.js?v=25", html)
+        self.assertIn("/static/styles.css?v=22", html)
         self.assertIn('id="reader-pdf"', html)
         self.assertIn('id="reader-content" class="reader-content" hidden', html)
         self.assertNotIn('id="reader-placeholder"', html)
@@ -96,6 +96,9 @@ class WebTests(unittest.TestCase):
         self.assertIn('id="source-dialog"', html)
         self.assertIn('id="source-content-kind"', html)
         self.assertIn('id="source-refresh-now"', html)
+        self.assertIn('id="export-sources"', html)
+        self.assertIn('id="import-sources"', html)
+        self.assertIn('id="source-import-file"', html)
 
         with urlopen(self.base_url + "/static/styles.css") as response:
             styles = response.read().decode()
@@ -133,6 +136,8 @@ class WebTests(unittest.TestCase):
         self.assertIn('document.querySelector("#source-button").addEventListener("click", openSource)', script)
         self.assertIn('document.querySelector("#source-content-kind").value = state.activeKind', script)
         self.assertIn('api("/api/sources", { method: "POST"', script)
+        self.assertIn('api("/api/sources/export")', script)
+        self.assertIn('api("/api/sources/import"', script)
         self.assertIn('const refresh = await api("/api/refresh"', script)
         self.assertIn('return kind === "paper" ? "relevant" : null', script)
         self.assertIn('elements.relevanceNav.hidden = state.activeKind !== "paper"', script)
@@ -406,6 +411,41 @@ class WebTests(unittest.TestCase):
         )
         self.assertEqual(invalid_status, 400)
         self.assertIn("HTTP(S)", invalid["error"])
+
+    def test_source_manifest_api_exports_and_imports_configuration_only(self) -> None:
+        status, manifest = self.request("/api/sources/export")
+        self.assertEqual(status, 200)
+        self.assertEqual(manifest["format"], "herald.sources")
+        self.assertEqual(
+            set(manifest["sources"][0]),
+            {"title", "url", "category", "content_kind", "enabled"},
+        )
+        manifest["sources"].append(
+            {
+                "title": "Portable News",
+                "url": "https://example.net/news.xml",
+                "category": "Portable",
+                "content_kind": "news",
+                "enabled": False,
+            }
+        )
+        status, result = self.request(
+            "/api/sources/import", method="POST", payload=manifest
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(result["created"], 1)
+        imported = next(
+            source for source in result["sources"] if source["title"] == "Portable News"
+        )
+        self.assertEqual(imported["enabled"], 0)
+        self.assertIsNone(imported["refresh_attempted_at"])
+
+        invalid = dict(manifest, sources=[dict(manifest["sources"][0], id=99)])
+        status, error = self.request(
+            "/api/sources/import", method="POST", payload=invalid
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("unsupported fields", error["error"])
 
     def test_imports_a_paper_and_reports_idempotent_repeats(self) -> None:
         metadata = {

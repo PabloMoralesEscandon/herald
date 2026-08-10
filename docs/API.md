@@ -62,9 +62,19 @@ placed inside the vault.
 ## Sources and ingestion
 
 - `GET /api/sources`
+- `GET /api/sources/export` returns a portable `herald.sources` JSON document
 - `POST /api/sources` with
   `{"title":"…","url":"…","category":"…","content_kind":"paper|news"}`
+- `POST /api/sources/import` with a portable source document
 - `POST /api/refresh` to fetch all enabled sources
+
+Source export contains only `title`, `url`, `category`, `content_kind`, and
+`enabled`. It excludes database IDs, articles, reading state, rankings,
+validators, refresh health, and timestamps. Import validates the complete file
+before making one atomic, additive merge: matching URLs are updated, missing
+URLs are added, and local sources absent from the file are retained. Import
+never fetches feeds. The same format is available from the dashboard and with
+`herald sources export|import`.
 
 Herald seeds its research feeds plus official NVIDIA, OpenAI, AMD, and Intel
 announcement feeds. A source URL may point directly to RSS/Atom or to a page

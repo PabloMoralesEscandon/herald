@@ -13,7 +13,15 @@ from herald.feeds import (
     parse_feed,
 )
 from herald.service import FeedResponse, HeraldService
-from herald.sources import CURATED_SOURCES, NEWS_SOURCES, RESEARCH_SOURCES
+from herald.sources import (
+    CURATED_SOURCES,
+    NEWS_SOURCES,
+    RESEARCH_SOURCES,
+    SOURCE_MANIFEST_FORMAT,
+    SOURCE_MANIFEST_VERSION,
+    SourceManifestError,
+    validate_source_manifest,
+)
 from herald.storage import Database
 
 
@@ -158,19 +166,10 @@ class IngestionServiceTests(unittest.TestCase):
         self.assertEqual(service.seed_curated_sources(), len(CURATED_SOURCES))
         self.assertEqual(service.seed_curated_sources(), 0)
         sources = service.list_sources()
-        self.assertEqual(len(sources), 15)
+        self.assertEqual(len(sources), len(CURATED_SOURCES))
         self.assertEqual(
             {source["category"] for source in sources},
-            {
-                "Chip Design & Digital Circuits",
-                "Machine Learning",
-                "Operating Systems",
-                "Reinforcement Learning",
-                "NVIDIA",
-                "OpenAI",
-                "AMD",
-                "Intel",
-            },
+            {source.category for source in CURATED_SOURCES},
         )
         self.assertEqual(
             sum(source["content_kind"] == "paper" for source in sources),
@@ -180,6 +179,88 @@ class IngestionServiceTests(unittest.TestCase):
             sum(source["content_kind"] == "news" for source in sources),
             len(NEWS_SOURCES),
         )
+        self.assertTrue(all(source["enabled"] for source in sources))
+
+    def test_source_manifest_exports_only_portable_configuration(self) -> None:
+        source_id = self.database.add_source(
+            "Private setup name",
+            "https://example.org/feed.xml",
+            "Test",
+            content_kind="news",
+            enabled=False,
+        )
+        self.database.update_source_refresh_state(
+            source_id, succeeded=False, error="private runtime failure"
+        )
+        service = HeraldService(self.database)
+
+        manifest = service.export_sources()
+
+        self.assertEqual(manifest["format"], SOURCE_MANIFEST_FORMAT)
+        self.assertEqual(manifest["version"], SOURCE_MANIFEST_VERSION)
+        self.assertEqual(
+            set(manifest["sources"][0]),
+            {"title", "url", "category", "content_kind", "enabled"},
+        )
+        serialized = str(manifest)
+        for forbidden in ("private runtime failure", "etag", "refresh_error", "created_at"):
+            self.assertNotIn(forbidden, serialized)
+
+    def test_source_manifest_import_is_atomic_additive_and_idempotent(self) -> None:
+        retained = self.database.add_source(
+            "Retained", "https://example.org/retained.xml", "Local"
+        )
+        service = HeraldService(self.database)
+        manifest = {
+            "format": SOURCE_MANIFEST_FORMAT,
+            "version": SOURCE_MANIFEST_VERSION,
+            "sources": [
+                {
+                    "title": "Imported",
+                    "url": "https://example.org/imported.xml?utm_source=old",
+                    "category": "Company",
+                    "content_kind": "news",
+                    "enabled": False,
+                }
+            ],
+        }
+
+        self.assertEqual(
+            service.import_sources(manifest),
+            {"imported": 1, "created": 1, "updated": 0, "unchanged": 0},
+        )
+        self.assertEqual(
+            service.import_sources(manifest),
+            {"imported": 1, "created": 0, "updated": 0, "unchanged": 1},
+        )
+        self.assertIsNotNone(self.database.get_source(retained))
+        imported = next(
+            source for source in service.list_sources() if source["title"] == "Imported"
+        )
+        self.assertEqual(imported["url"], "https://example.org/imported.xml")
+        self.assertEqual(imported["enabled"], 0)
+        self.assertIsNone(imported["refresh_attempted_at"])
+
+    def test_source_manifest_rejects_unsafe_or_ambiguous_documents(self) -> None:
+        valid_source = {
+            "title": "Feed",
+            "url": "https://example.org/feed.xml",
+            "category": "Test",
+            "content_kind": "news",
+            "enabled": True,
+        }
+        base = {
+            "format": SOURCE_MANIFEST_FORMAT,
+            "version": SOURCE_MANIFEST_VERSION,
+            "sources": [valid_source],
+        }
+        unsafe = dict(valid_source, url="https://token@example.org/feed.xml")
+        duplicate = dict(base, sources=[valid_source, dict(valid_source)])
+        unknown = dict(base, sources=[dict(valid_source, id=42)])
+        for manifest in (dict(base, sources=[unsafe]), duplicate, unknown):
+            with self.subTest(manifest=manifest):
+                with self.assertRaises(SourceManifestError):
+                    validate_source_manifest(manifest)
 
     def test_local_backfill_preserves_status_and_is_idempotent(self) -> None:
         paper_source = self.database.add_source(

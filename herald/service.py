@@ -26,7 +26,11 @@ from .papers import (
     normalize_doi,
 )
 from .relevance import RelevanceCoordinator, RelevanceEngine
-from .sources import CURATED_SOURCES
+from .sources import (
+    create_source_manifest,
+    load_source_catalog,
+    validate_source_manifest,
+)
 from .storage import Database
 from .summaries import (
     LocalSummarizer,
@@ -170,14 +174,18 @@ class HeraldService:
 
     def seed_curated_sources(self) -> int:
         existing = {source["url"] for source in self.database.list_sources()}
-        for source in CURATED_SOURCES:
+        catalog = load_source_catalog()
+        for source in catalog:
+            if source.url in existing:
+                continue
             self.database.add_source(
                 source.title,
                 source.url,
                 source.category,
                 content_kind=source.content_kind,
+                enabled=source.enabled,
             )
-        return sum(source.url not in existing for source in CURATED_SOURCES)
+        return sum(source.url not in existing for source in catalog)
 
     def backfill_existing(self, *, sync_obsidian: bool = True) -> dict[str, object]:
         """Upgrade existing rows locally without changing any reading status."""
@@ -273,6 +281,17 @@ class HeraldService:
 
     def list_sources(self, enabled_only: bool = False) -> list[dict[str, object]]:
         return self.database.list_sources(enabled_only=enabled_only)
+
+    def export_sources(self) -> dict[str, object]:
+        """Return portable configuration, deliberately excluding local source state."""
+        return create_source_manifest(self.database.list_sources())
+
+    def import_sources(self, payload: object) -> dict[str, int]:
+        """Validate and idempotently merge portable source configuration."""
+        sources = validate_source_manifest(payload)
+        return self.database.import_source_configs(
+            [source.to_dict() for source in sources]
+        )
 
     def _fetch_source_url(
         self,

@@ -6,8 +6,8 @@
     <meta name="color-scheme" content="light">
     <meta name="theme-color" content="#f4f1e8">
     <title>Herald — Technical reading inbox</title>
-    <link rel="stylesheet" href="/static/styles.css?v=21">
-    <script src="/static/app.js?v=24" defer></script>
+    <link rel="stylesheet" href="/static/styles.css?v=22">
+    <script src="/static/app.js?v=25" defer></script>
   </head>
   <body>
     <div class="app-shell">
@@ -265,6 +265,17 @@
           <input id="source-refresh-now" name="refresh_now" type="checkbox" checked>
           <span><strong>Fetch entries now</strong><small>Refresh all enabled feeds after adding this source.</small></span>
         </label>
+        <section class="source-portability" aria-labelledby="source-portability-title">
+          <div>
+            <strong id="source-portability-title">Move your source list</strong>
+            <small>Subscriptions only—never articles, reading history, rankings, or refresh data.</small>
+          </div>
+          <div class="source-portability-actions">
+            <button id="export-sources" class="quiet-button" type="button">Export JSON</button>
+            <button id="import-sources" class="quiet-button" type="button">Import JSON</button>
+            <input id="source-import-file" type="file" accept="application/json,.json" hidden>
+          </div>
+        </section>
         <p id="source-result" class="form-result" role="alert" hidden></p>
         <footer class="modal-actions">
           <button class="quiet-button" type="button" data-close-dialog="source-dialog">Cancel</button>

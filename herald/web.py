@@ -67,6 +67,9 @@ class HeraldRequestHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/sources":
             self._send_json(self.server.database.list_sources())
             return
+        if parsed.path == "/api/sources/export":
+            self._send_json(self.server.service.export_sources())
+            return
         if parsed.path == "/api/stats":
             self._send_json(self.server.database.entry_counts())
             return
@@ -130,6 +133,9 @@ class HeraldRequestHandler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/api/sources":
             self._add_source()
+            return
+        if path == "/api/sources/import":
+            self._import_sources()
             return
         if path == "/api/refresh":
             self._refresh()
@@ -278,6 +284,18 @@ class HeraldRequestHandler(BaseHTTPRequestHandler):
             if source["id"] == source_id
         )
         self._send_json(source, HTTPStatus.CREATED)
+
+    def _import_sources(self) -> None:
+        payload = self._read_json()
+        if payload is None:
+            return
+        try:
+            result = self.server.service.import_sources(payload)
+        except ValueError as error:
+            self._send_error(HTTPStatus.BAD_REQUEST, str(error))
+            return
+        result["sources"] = self.server.database.list_sources()
+        self._send_json(result)
 
     def _change_status(self, entry_id: int) -> None:
         payload = self._read_json()

@@ -72,6 +72,9 @@ document.addEventListener("DOMContentLoaded", () => {
   document.querySelector("#rescore-button").addEventListener("click", rescorePapers);
   document.querySelector("#import-form").addEventListener("submit", importPaper);
   document.querySelector("#source-form").addEventListener("submit", addSource);
+  document.querySelector("#export-sources").addEventListener("click", exportSources);
+  document.querySelector("#import-sources").addEventListener("click", () => document.querySelector("#source-import-file").click());
+  document.querySelector("#source-import-file").addEventListener("change", importSources);
   document.querySelector("#reference-list").addEventListener("click", addReferenceFromEvent);
   document.querySelectorAll("[data-close-dialog]").forEach((button) => button.addEventListener("click", () => {
     document.querySelector(`#${button.dataset.closeDialog}`).close();
@@ -763,6 +766,60 @@ async function addSource(event) {
     button.disabled = false;
     button.textContent = "Add source";
     if (!elements.sourceDialog.open) form.reset();
+  }
+}
+
+async function exportSources() {
+  const button = document.querySelector("#export-sources");
+  button.disabled = true;
+  try {
+    const manifest = await api("/api/sources/export");
+    const blob = new Blob([`${JSON.stringify(manifest, null, 2)}\n`], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "herald-sources.json";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    showToast(`Exported ${manifest.sources.length} source subscriptions`);
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function importSources(event) {
+  const input = event.currentTarget;
+  const file = input.files?.[0];
+  if (!file) return;
+  const resultElement = document.querySelector("#source-result");
+  const button = document.querySelector("#import-sources");
+  button.disabled = true;
+  resultElement.hidden = true;
+  try {
+    if (file.size > 1_000_000) throw new Error("Source list exceeds the 1 MB limit");
+    const manifest = JSON.parse(await file.text());
+    const result = await api("/api/sources/import", {
+      method: "POST",
+      body: JSON.stringify(manifest),
+    });
+    state.sources = result.sources;
+    renderCategories();
+    renderSourceHealth();
+    resultElement.hidden = false;
+    resultElement.className = "form-result success";
+    resultElement.textContent = `Imported ${result.imported} sources: ${result.created} new, ${result.updated} updated, ${result.unchanged} unchanged. No feeds were fetched.`;
+    showToast(`Source list imported · ${result.created} new`);
+  } catch (error) {
+    resultElement.hidden = false;
+    resultElement.className = "form-result error";
+    resultElement.textContent = error instanceof SyntaxError ? "That file is not valid JSON" : error.message;
+  } finally {
+    input.value = "";
+    button.disabled = false;
   }
 }
 

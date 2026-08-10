@@ -372,6 +372,7 @@ class Database:
         *,
         content_kind: str = "paper",
         adapter: str = "feed",
+        enabled: bool | None = None,
     ) -> int:
         if content_kind not in VALID_CONTENT_KINDS:
             raise ValueError(f"Unknown content kind: {content_kind}")
@@ -379,14 +380,15 @@ class Database:
             connection.execute(
                 """
                 INSERT INTO sources(
-                    title, url, category, content_kind, adapter, created_at
+                    title, url, category, content_kind, adapter, enabled, created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(url) DO UPDATE SET
                     title = excluded.title,
                     category = excluded.category,
                     content_kind = excluded.content_kind,
-                    adapter = excluded.adapter
+                    adapter = excluded.adapter,
+                    enabled = CASE WHEN ? THEN excluded.enabled ELSE sources.enabled END
                 """,
                 (
                     title.strip(),
@@ -394,7 +396,9 @@ class Database:
                     category.strip(),
                     content_kind,
                     adapter.strip() or "feed",
+                    int(True if enabled is None else enabled),
                     utc_now(),
+                    int(enabled is not None),
                 ),
             )
             row = connection.execute(
@@ -410,6 +414,60 @@ class Database:
         query += " ORDER BY category, title"
         with self.connect() as connection:
             return [dict(row) for row in connection.execute(query, params)]
+
+    def import_source_configs(
+        self, sources: list[dict[str, str | bool]]
+    ) -> dict[str, int]:
+        """Merge a fully validated manifest in one transaction."""
+        created = updated = unchanged = 0
+        with self.connect() as connection:
+            existing = {
+                str(row["url"]): dict(row)
+                for row in connection.execute("SELECT * FROM sources")
+            }
+            for source in sources:
+                url = str(source["url"])
+                previous = existing.get(url)
+                expected = {
+                    "title": str(source["title"]),
+                    "url": url,
+                    "category": str(source["category"]),
+                    "content_kind": str(source["content_kind"]),
+                    "enabled": int(bool(source["enabled"])),
+                }
+                if previous is None:
+                    created += 1
+                elif all(previous.get(key) == value for key, value in expected.items()):
+                    unchanged += 1
+                else:
+                    updated += 1
+                connection.execute(
+                    """
+                    INSERT INTO sources(
+                        title, url, category, content_kind, adapter, enabled, created_at
+                    ) VALUES (?, ?, ?, ?, 'feed', ?, ?)
+                    ON CONFLICT(url) DO UPDATE SET
+                        title = excluded.title,
+                        category = excluded.category,
+                        content_kind = excluded.content_kind,
+                        adapter = excluded.adapter,
+                        enabled = excluded.enabled
+                    """,
+                    (
+                        expected["title"],
+                        expected["url"],
+                        expected["category"],
+                        expected["content_kind"],
+                        expected["enabled"],
+                        utc_now(),
+                    ),
+                )
+        return {
+            "imported": len(sources),
+            "created": created,
+            "updated": updated,
+            "unchanged": unchanged,
+        }
 
     def get_source(self, source_id: int) -> dict[str, Any] | None:
         with self.connect() as connection:
