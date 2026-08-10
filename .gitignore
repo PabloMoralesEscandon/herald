@@ -1,8 +1,62 @@
+# Herald runtime data (personal articles, reading state, exports, and vaults)
+.herald/
+*.db*
+*.sqlite*
+*.sqlite3*
+vault/
+obsidian-archive/
+exports/
+source-exports/
+herald-sources.json
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+.pypirc
+.npmrc
+
+# Python environments, caches, test output, and packages
 __pycache__/
 *.py[cod]
-.herald/
+*$py.class
 .venv/
+venv/
+env/
+ENV/
+.direnv/
+.python-version
+.pytest_cache/
+.mypy_cache/
+.pyright/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+coverage/
 dist/
 build/
+wheelhouse/
 *.egg-info/
+*.egg
 
+# Logs, temporary files, editors, and operating systems
+*.log
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+Desktop.ini

@@ -76,9 +76,10 @@ URLs are added, and local sources absent from the file are retained. Import
 never fetches feeds. The same format is available from the dashboard and with
 `herald sources export|import`.
 
-Herald seeds its research feeds plus official NVIDIA, OpenAI, AMD, and Intel
-announcement feeds. A source URL may point directly to RSS/Atom or to a page
-with a standard RSS/Atom autodiscovery link. Herald does not scrape HTML lists.
+Herald seeds the versioned public catalog in `herald/data/sources.json`, which
+contains the curated research and news feeds shipped with the application. A
+source URL may point directly to RSS/Atom or to a page with a standard RSS/Atom
+autodiscovery link. Herald does not scrape HTML lists.
 The first successful refresh of a News source imports only items published in
 the latest 30 days; later refreshes accept every newly observed item.
 
