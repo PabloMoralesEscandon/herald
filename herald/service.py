@@ -155,7 +155,9 @@ class HeraldService:
             archive_root or database.path.parent / "obsidian-archive"
         ).expanduser().resolve()
         self.auto_enrich_kept = auto_enrich_kept
-        self._enrichment_lock = threading.Lock()
+        # Serializes the short state transitions around kept-paper enrichment.
+        # Provider I/O happens outside this lock, so triage remains responsive.
+        self._enrichment_lock = threading.RLock()
         self._enriching_entries: set[int] = set()
         self.now = now or (lambda: datetime.now(UTC))
 
@@ -565,9 +567,19 @@ class HeraldService:
         }
 
     def export_entry(self, entry_id: int) -> Path:
-        return self._export_entry(entry_id, resync_citing=True)
+        return self._export_entry(
+            entry_id,
+            resync_citing=True,
+            completes_enrichment=False,
+        )
 
-    def _export_entry(self, entry_id: int, *, resync_citing: bool) -> Path:
+    def _export_entry(
+        self,
+        entry_id: int,
+        *,
+        resync_citing: bool,
+        completes_enrichment: bool = False,
+    ) -> Path:
         entry = self._entry_for_export(entry_id)
         exporter = self.exporter
         try:
@@ -628,9 +640,15 @@ class HeraldService:
                 self._resync_citing_notes(entry_id)
             raise
         relative_path = exporter.relative_path(result.path)
+        with self._enrichment_lock:
+            enrichment_in_progress = entry_id in self._enriching_entries
         self.database.upsert_obsidian_export(
             entry_id,
-            state="synced",
+            state=(
+                "synced"
+                if completes_enrichment or not enrichment_in_progress
+                else "pending"
+            ),
             vault_path=str(exporter.vault_path),
             relative_path=relative_path,
             content_hash=result.content_hash,
@@ -664,7 +682,11 @@ class HeraldService:
     ) -> Path | None:
         entry_id = int(entry["id"])
         export = self.database.get_obsidian_export(entry_id)
-        if export is None or export["state"] not in {"synced", "archive_pending"}:
+        if export is None or export["state"] not in {
+            "pending",
+            "synced",
+            "archive_pending",
+        }:
             return None
         relative_path = str(export["relative_path"] or entry.get("exported_path") or "")
         active_exporter = exporter or self.exporter
@@ -706,6 +728,13 @@ class HeraldService:
         return destination
 
     def change_status(self, entry_id: int, status: str) -> dict[str, object]:
+        # The background worker takes the same lock only for its final status
+        # check and note write. This prevents an enrichment that finished at the
+        # same instant as an unkeep from recreating an archived note.
+        with self._enrichment_lock:
+            return self._change_status(entry_id, status)
+
+    def _change_status(self, entry_id: int, status: str) -> dict[str, object]:
         previous = self.database.get_entry(entry_id)
         if previous is None:
             raise KeyError(f"Entry {entry_id} does not exist")
@@ -778,7 +807,11 @@ class HeraldService:
                     except (OSError, ValueError, ObsidianConflictError):
                         continue
                 self._start_kept_enrichment(entry)
-            elif export is not None and export["state"] in {"synced", "archive_pending"}:
+            elif export is not None and export["state"] in {
+                "pending",
+                "synced",
+                "archive_pending",
+            }:
                 try:
                     self._archive_entry(entry)
                 except (OSError, ValueError, ObsidianConflictError):
@@ -806,6 +839,19 @@ class HeraldService:
             if entry_id in self._enriching_entries:
                 return
             self._enriching_entries.add(entry_id)
+            export = self.database.get_obsidian_export(entry_id)
+            if export is not None:
+                # Enrichment and note synchronization form one observable job.
+                # The importer necessarily commits metadata before the note can
+                # be rendered, so consumers must not treat a previously synced
+                # note as current while that second step is still in flight.
+                self.database.upsert_obsidian_export(
+                    entry_id,
+                    state="pending",
+                    vault_path=str(export["vault_path"] or ""),
+                    relative_path=str(export["relative_path"] or ""),
+                    content_hash=str(export["content_hash"] or ""),
+                )
 
         def enrich() -> None:
             try:
@@ -815,14 +861,24 @@ class HeraldService:
                     self.database.set_enrichment_state(
                         entry_id, "failed", error=str(error)
                     )
-                    return
-                current = self.database.get_entry(entry_id)
-                if current is None or current["status"] != "kept":
-                    return
-                try:
-                    self.export_entry(entry_id)
-                except (OSError, ValueError, ObsidianConflictError):
-                    pass
+                # Serialize the final status check and export with triage. If a
+                # user unkeeps the paper during provider I/O, change_status()
+                # archives the pending note and this worker cannot recreate it.
+                with self._enrichment_lock:
+                    current = self.database.get_entry(entry_id)
+                    if current is not None and current["status"] == "kept":
+                        try:
+                            self._export_entry(
+                                entry_id,
+                                resync_citing=True,
+                                completes_enrichment=True,
+                            )
+                        except (OSError, ValueError, ObsidianConflictError):
+                            pass
+                    # Do this before releasing the transition lock. Otherwise a
+                    # concurrent manual export could observe the completed job
+                    # as active and change its freshly synced state to pending.
+                    self._enriching_entries.discard(entry_id)
             finally:
                 with self._enrichment_lock:
                     self._enriching_entries.discard(entry_id)

@@ -307,8 +307,14 @@ class WebTests(unittest.TestCase):
             "fieldsOfStudy": ["Computer Science"],
             "references": [],
         }
+        fetch_started = threading.Event()
+        allow_fetch_to_finish = threading.Event()
+        self.addCleanup(allow_fetch_to_finish.set)
 
         def fetcher(url: str, headers: object, max_bytes: int, timeout: float) -> bytes:
+            fetch_started.set()
+            if not allow_fetch_to_finish.wait(timeout=2):
+                raise AssertionError("test did not release the metadata fetch")
             return json.dumps(metadata).encode()
 
         self.server.service.paper_importer = PaperImporter(
@@ -321,21 +327,108 @@ class WebTests(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertEqual(kept["status"], "kept")
+        self.assertTrue(fetch_started.wait(timeout=1))
+
+        # A note exists from the initial keep, but it is explicitly not current
+        # until both metadata persistence and the rewritten note are complete.
+        export = self.database.get_obsidian_export(entry_id)
+        self.assertIsNotNone(export)
+        self.assertEqual(export["state"], "pending")
+        initial_note = self.settings.vault_path / str(export["relative_path"])
+        self.assertIn(
+            'enrichment_status: "pending"',
+            initial_note.read_text(encoding="utf-8"),
+        )
+        allow_fetch_to_finish.set()
 
         deadline = time.monotonic() + 2
         while time.monotonic() < deadline:
             enriched = self.database.get_entry(entry_id)
-            if enriched and enriched["enrichment_status"] == "enriched":
+            export = self.database.get_obsidian_export(entry_id)
+            if (
+                enriched
+                and enriched["enrichment_status"] == "enriched"
+                and export
+                and export["state"] == "synced"
+            ):
                 break
             time.sleep(0.01)
         else:
-            self.fail("kept paper did not finish background enrichment")
+            self.fail("kept paper did not finish enrichment and note synchronization")
         self.assertEqual(
             self.database.list_paper_identifiers(entry_id)[0]["value"],
             "2608.01234",
         )
         note = self.settings.vault_path / self.database.get_entry(entry_id)["exported_path"]
         self.assertIn("arxiv:2608.01234", note.read_text(encoding="utf-8"))
+
+    def test_unkeep_during_enrichment_archives_note_without_recreating_it(self) -> None:
+        source_id = self.database.add_source(
+            "arXiv Test", "https://example.org/arxiv.xml", "Machine Learning"
+        )
+        entry_id, _ = self.database.upsert_entry(
+            source_id=source_id,
+            guid="arxiv-unkeep-during-enrichment",
+            url="https://arxiv.org/abs/2608.05678",
+            title="A paper unkept during metadata retrieval",
+        )
+        fetch_started = threading.Event()
+        allow_fetch_to_finish = threading.Event()
+        self.addCleanup(allow_fetch_to_finish.set)
+
+        def fetcher(url: str, headers: object, max_bytes: int, timeout: float) -> bytes:
+            fetch_started.set()
+            if not allow_fetch_to_finish.wait(timeout=2):
+                raise AssertionError("test did not release the metadata fetch")
+            return json.dumps({
+                "paperId": "abcdef0123456789abcdef0123456789abcdef01",
+                "externalIds": {"ArXiv": "2608.05678"},
+                "url": "https://www.semanticscholar.org/paper/unkept",
+                "title": "A paper unkept during metadata retrieval",
+                "abstract": "Metadata that must not recreate an archived note.",
+                "authors": [],
+                "fieldsOfStudy": ["Computer Science"],
+                "references": [],
+            }).encode()
+
+        self.server.service.paper_importer = PaperImporter(
+            self.database, fetcher=fetcher, sleep=lambda _: None, request_delay=0
+        )
+        status, kept = self.request(
+            f"/api/entries/{entry_id}/action",
+            method="POST",
+            payload={"action": "keep"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(kept["obsidian_export"]["state"], "pending")
+        self.assertTrue(fetch_started.wait(timeout=1))
+        note = self.settings.vault_path / str(kept["exported_path"])
+        self.assertTrue(note.is_file())
+
+        status, discarded = self.request(
+            f"/api/entries/{entry_id}/action",
+            method="POST",
+            payload={"action": "discard"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(discarded["status"], "discarded")
+        self.assertEqual(discarded["obsidian_export"]["state"], "archived")
+        self.assertFalse(note.exists())
+
+        allow_fetch_to_finish.set()
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            entry = self.database.get_entry(entry_id)
+            if entry and entry["enrichment_status"] == "enriched":
+                break
+            time.sleep(0.01)
+        else:
+            self.fail("background metadata retrieval did not finish")
+        self.assertEqual(self.database.get_entry(entry_id)["status"], "discarded")
+        self.assertEqual(
+            self.database.get_obsidian_export(entry_id)["state"], "archived"
+        )
+        self.assertFalse(note.exists())
 
     def test_rejects_unknown_action(self) -> None:
         entry_id = self.database.list_entries()[0]["id"]
