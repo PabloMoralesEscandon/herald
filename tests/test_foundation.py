@@ -94,6 +94,7 @@ class FoundationTests(unittest.TestCase):
         self.assertEqual(entry["summary_provider"], "unknown")
         self.assertEqual(entry["summary_model"], "")
         self.assertIsNone(entry["summary_generated_at"])
+        self.assertEqual(entry["content_markdown"], "")
         self.assertEqual(entry["content_kind"], "paper")
         self.assertEqual(entry["canonical_url"], "https://example.org/article")
         self.assertEqual(entry["status"], "unread")
@@ -108,7 +109,7 @@ class FoundationTests(unittest.TestCase):
                 )
             }
             version = int(migrated.execute("PRAGMA user_version").fetchone()[0])
-        self.assertEqual(version, 4)
+        self.assertEqual(version, 5)
         self.assertTrue(
             {
                 "paper_identifiers",

@@ -170,6 +170,45 @@ class ExportTests(unittest.TestCase):
             path.relative_to(self.vault).as_posix(),
         )
 
+    def test_export_automatically_converts_legacy_html_content(self) -> None:
+        html_entry_id, _ = self.database.upsert_entry(
+            source_id=self.database.list_sources()[0]["id"],
+            guid="legacy-html",
+            url="https://example.org/articles/rich",
+            title="Rich article",
+            content=(
+                '<p>An <strong>important</strong> result. '
+                '<a href="/methods">Methods</a>.</p>'
+                '<ul><li>Fast</li><li>Local</li></ul>'
+            ),
+        )
+        self.database.set_status(html_entry_id, "kept")
+
+        path = self.service.export_entry(html_entry_id)
+        document = path.read_text(encoding="utf-8")
+
+        self.assertIn("An **important** result.", document)
+        self.assertIn("[Methods](<https://example.org/methods>)", document)
+        self.assertIn("- Fast\n- Local", document)
+        self.assertNotIn("<strong>", document)
+
+    def test_export_prefers_rich_markdown_over_plain_reader_content(self) -> None:
+        rich_entry_id, _ = self.database.upsert_entry(
+            source_id=self.database.list_sources()[0]["id"],
+            guid="rich-markdown",
+            url="https://example.org/articles/structured",
+            title="Structured article",
+            content="Plain reader text.",
+            content_markdown="A **structured** excerpt.\n\n- First\n- Second",
+        )
+        self.database.set_status(rich_entry_id, "kept")
+
+        path = self.service.export_entry(rich_entry_id)
+        document = path.read_text(encoding="utf-8")
+
+        self.assertIn("A **structured** excerpt.\n\n- First\n- Second", document)
+        self.assertNotIn("Plain reader text.", document)
+
     def test_reexport_is_path_and_content_idempotent(self) -> None:
         self.database.set_status(self.entry_id, "kept")
         self.service.summarize_entry(self.entry_id)

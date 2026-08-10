@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS entries (
     published_at TEXT,
     discovered_at TEXT NOT NULL,
     content TEXT NOT NULL DEFAULT '',
+    content_markdown TEXT NOT NULL DEFAULT '',
     summary TEXT NOT NULL DEFAULT '',
     summary_provider TEXT NOT NULL DEFAULT '',
     summary_model TEXT NOT NULL DEFAULT '',
@@ -319,6 +320,7 @@ class Database:
                 "summary_provider": "TEXT NOT NULL DEFAULT ''",
                 "summary_model": "TEXT NOT NULL DEFAULT ''",
                 "summary_generated_at": "TEXT",
+                "content_markdown": "TEXT NOT NULL DEFAULT ''",
                 "content_kind": "TEXT NOT NULL DEFAULT 'paper'",
                 "canonical_url": "TEXT NOT NULL DEFAULT ''",
                 "canonical_key": "TEXT",
@@ -362,7 +364,7 @@ class Database:
                 ON CONFLICT(entry_id) DO NOTHING
                 """
             )
-            connection.execute("PRAGMA user_version = 4")
+            connection.execute("PRAGMA user_version = 5")
 
     def add_source(
         self,
@@ -512,6 +514,7 @@ class Database:
         author: str = "",
         published_at: str | None = None,
         content: str = "",
+        content_markdown: str = "",
         summary: str = "",
         summary_provider: str = "",
         summary_model: str = "",
@@ -558,6 +561,9 @@ class Database:
                     UPDATE entries
                     SET url = ?, title = ?, author = ?, published_at = ?,
                         content = CASE WHEN ? <> '' THEN ? ELSE content END,
+                        content_markdown = CASE
+                            WHEN ? <> '' THEN ? ELSE content_markdown
+                        END,
                         summary = CASE
                             WHEN summary = '' AND ? <> '' THEN ?
                             ELSE summary
@@ -587,6 +593,8 @@ class Database:
                         published_at,
                         content,
                         content,
+                        content_markdown,
+                        content_markdown,
                         summary,
                         summary,
                         summary,
@@ -608,10 +616,10 @@ class Database:
                 """
                 INSERT INTO entries(
                     source_id, guid, url, title, author, published_at,
-                    discovered_at, content, summary, summary_provider,
+                    discovered_at, content, content_markdown, summary, summary_provider,
                     summary_model, summary_generated_at, content_kind,
                     canonical_url, canonical_key, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     source_id,
@@ -622,6 +630,7 @@ class Database:
                     published_at,
                     utc_now(),
                     content,
+                    content_markdown,
                     summary,
                     summary_provider,
                     summary_model,

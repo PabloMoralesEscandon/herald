@@ -12,6 +12,7 @@ from herald.feeds import (
     discover_feed_url,
     parse_feed,
 )
+from herald.markdown import html_to_markdown
 from herald.service import FeedResponse, HeraldService
 from herald.sources import (
     CURATED_SOURCES,
@@ -114,6 +115,7 @@ class FeedParserTests(unittest.TestCase):
         self.assertEqual(entries[0].author, "Example Author")
         self.assertEqual(entries[0].published_at, "2026-08-06T10:00:00+00:00")
         self.assertEqual(entries[0].content, "Full paper abstract.")
+        self.assertEqual(entries[0].content_markdown, "Full **paper** abstract.")
 
     def test_parses_atom_links_authors_and_iso_dates(self) -> None:
         entries = parse_feed(ATOM_FEED)
@@ -151,6 +153,70 @@ class FeedParserTests(unittest.TestCase):
             discover_feed_url(document, "https://example.com/news"),
             "https://example.com/updates.atom",
         )
+
+    def test_converts_atom_xhtml_to_obsidian_markdown(self) -> None:
+        document = b"""<feed xmlns="http://www.w3.org/2005/Atom"
+            xmlns:xhtml="http://www.w3.org/1999/xhtml">
+          <entry>
+            <id>rich-entry</id>
+            <title>Rich entry</title>
+            <link href="https://example.org/news/item" />
+            <content type="xhtml"><xhtml:div>
+              <xhtml:p>Read <xhtml:a href="/background">the background</xhtml:a>.</xhtml:p>
+              <xhtml:ul><xhtml:li>First point</xhtml:li><xhtml:li>Second point</xhtml:li></xhtml:ul>
+            </xhtml:div></content>
+          </entry>
+        </feed>"""
+
+        entry = parse_feed(document)[0]
+
+        self.assertEqual(
+            entry.content_markdown,
+            "Read [the background](<https://example.org/background>).\n\n"
+            "- First point\n- Second point",
+        )
+        self.assertEqual(entry.content, "Read the background . First point Second point")
+
+    def test_html_converter_preserves_structure_and_removes_active_content(self) -> None:
+        converted = html_to_markdown(
+            """<h2>Result</h2><p>A <strong>fast</strong> result with
+            <code>x()</code>.</p><ol><li>Measure</li><li>Compare<ul>
+            <li>Record details</li></ul></li></ol><blockquote>Reproducible.</blockquote>
+            <pre><code class="language-python">print("ok")</code></pre>
+            <script>alert("unsafe")</script>""",
+            base_url="https://example.org/article",
+        )
+
+        self.assertIn("## Result", converted)
+        self.assertIn("A **fast** result with `x()`.", converted)
+        self.assertIn("1. Measure\n2. Compare\n  - Record details", converted)
+        self.assertIn("> Reproducible.", converted)
+        self.assertIn('```python\nprint("ok")\n```', converted)
+        self.assertNotIn("alert", converted)
+
+        omitted_closing_tags = html_to_markdown(
+            "<ul><li>One<li>Two<ul><li>Nested<li>Again</ul><li>Three</ul>"
+        )
+        self.assertEqual(
+            omitted_closing_tags,
+            "- One\n- Two\n  - Nested\n  - Again\n- Three",
+        )
+
+        unsafe_link = html_to_markdown('<a href="javascript:alert(1)">Open</a>')
+        self.assertEqual(unsafe_link, "Open")
+
+        table = html_to_markdown(
+            "<table><tr><th>Name</th><th>Value</th></tr>"
+            "<tr><td>Latency</td><td>12 ms</td></tr></table>"
+        )
+        self.assertEqual(
+            table,
+            "| Name | Value |\n| --- | --- |\n| Latency | 12 ms |",
+        )
+
+    def test_html_converter_leaves_existing_markdown_unchanged(self) -> None:
+        markdown = "A **curated** paragraph.\n\n- One\n- Two"
+        self.assertEqual(html_to_markdown(markdown), markdown)
 
 
 class IngestionServiceTests(unittest.TestCase):
@@ -324,7 +390,10 @@ class IngestionServiceTests(unittest.TestCase):
         self.assertEqual((first.fetched, first.created, first.updated), (1, 1, 0))
         self.assertEqual((second.fetched, second.created, second.updated), (1, 0, 1))
         self.assertEqual(len(self.database.list_entries()), 1)
-        self.assertTrue(self.database.list_entries()[0]["summary"])
+        stored = self.database.list_entries()[0]
+        self.assertTrue(stored["summary"])
+        self.assertEqual(stored["content"], "Full paper abstract.")
+        self.assertEqual(stored["content_markdown"], "Full **paper** abstract.")
 
     def test_cross_listed_url_is_deduplicated_between_sources(self) -> None:
         source_one = self.database.add_source(

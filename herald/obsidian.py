@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
+from .markdown import html_to_markdown
+
 
 FRONTMATTER_START = "# herald:managed:start"
 FRONTMATTER_END = "# herald:managed:end"
@@ -177,8 +179,13 @@ def _managed_body(entry: dict[str, Any]) -> str:
     provider = str(entry.get("summary_provider") or "unknown")
     model = str(entry.get("summary_model") or "")
     provenance = f"{provider} ({model})" if model else provider
-    content = str(entry.get("content") or "No article text was supplied by the feed.")
     source_url = str(entry.get("canonical_url") or entry.get("url") or "")
+    content = str(entry.get("content_markdown") or "").strip()
+    if not content:
+        content = html_to_markdown(
+            str(entry.get("content") or "No article text was supplied by the feed."),
+            base_url=source_url,
+        )
     source_title = str(entry.get("source_title") or "Unknown source")
     author = str(entry.get("author") or "Unknown")
     published = str(entry.get("published_at") or "Unknown")

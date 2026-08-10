@@ -418,25 +418,44 @@ class PaperImporter:
         self.timeout = min(max(timeout, 1.0), 30.0)
         self._last_request_at: dict[str, float] = {}
 
-    def import_paper(self, value: str) -> PaperImportResult:
+    def import_paper(
+        self,
+        value: str,
+        *,
+        inspect_page: bool = False,
+    ) -> PaperImportResult:
         locator = parse_paper_locator(value)
         page_metadata: PaperMetadata | None = None
         provider_locator = locator
-        if locator.scheme == "url":
-            document = self.fetcher(
-                locator.page_url,
-                {"Accept": "text/html, application/xhtml+xml"},
-                MAX_PAPER_PAGE_BYTES,
-                self.timeout,
-            )
-            page_metadata = parse_citation_metadata(document, locator.page_url)
+        provider_errors: list[PaperImportError] = []
+        requested_url = ""
+        raw_parts = urlsplit(value.strip())
+        if raw_parts.scheme.lower() == "https" and raw_parts.hostname:
+            requested_url = _validate_public_https_url(value.strip(), resolve_dns=False)
+        page_url = locator.page_url or (requested_url if inspect_page else "")
+        if page_url:
+            try:
+                document = self.fetcher(
+                    page_url,
+                    {"Accept": "text/html, application/xhtml+xml"},
+                    MAX_PAPER_PAGE_BYTES,
+                    self.timeout,
+                )
+                page_metadata = parse_citation_metadata(document, page_url)
+            except PaperImportError as error:
+                # A DOI/arXiv/S2 identifier can still be enriched by a metadata
+                # provider when the publication page is temporarily unavailable.
+                # For a generic page URL there is no other identifier to query.
+                if locator.scheme == "url":
+                    raise
+                provider_errors.append(error)
+        if page_metadata is not None:
             if "doi" in page_metadata.identifiers:
                 provider_locator = PaperLocator("doi", page_metadata.identifiers["doi"], locator.page_url)
             elif "arxiv" in page_metadata.identifiers:
                 provider_locator = PaperLocator("arxiv", page_metadata.identifiers["arxiv"], locator.page_url)
 
         metadata: PaperMetadata | None = None
-        provider_errors: list[PaperImportError] = []
         if provider_locator.scheme in {"doi", "arxiv", "s2"}:
             try:
                 metadata = self._semantic_scholar(provider_locator)

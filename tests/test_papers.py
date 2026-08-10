@@ -64,7 +64,10 @@ class FixtureFetcher:
 
     def __call__(self, url: str, headers: object, max_bytes: int, timeout: float) -> bytes:
         self.calls.append((url, max_bytes, timeout))
-        if url == "https://papers.example.org/work/1":
+        if url in {
+            "https://papers.example.org/work/1",
+            "https://doi.org/10.1145/EXAMPLE.1",
+        }:
             return PAPER_PAGE
         response = self.crossref if "api.crossref.org" in url else self.s2
         if isinstance(response, Exception):
@@ -195,6 +198,18 @@ class PaperImportTests(unittest.TestCase):
         page_call = fetcher.calls[0]
         self.assertEqual(page_call[1], MAX_PAPER_PAGE_BYTES)
         self.assertLessEqual(page_call[2], 30)
+
+    def test_inspection_reads_a_recognized_paper_url_before_provider_lookup(self) -> None:
+        fetcher = FixtureFetcher()
+
+        result = self.importer(fetcher).import_paper(
+            "https://doi.org/10.1145/EXAMPLE.1",
+            inspect_page=True,
+        )
+
+        self.assertEqual(fetcher.calls[0][0], "https://doi.org/10.1145/EXAMPLE.1")
+        self.assertEqual(fetcher.calls[0][1], MAX_PAPER_PAGE_BYTES)
+        self.assertIn("chiplets", {item["keyword"] for item in result.keywords})
 
     def test_provider_failure_retries_then_leaves_database_unchanged(self) -> None:
         fetcher = FixtureFetcher(s2=PaperFetchError("offline", transient=True))

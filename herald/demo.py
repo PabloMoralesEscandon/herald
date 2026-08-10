@@ -45,8 +45,10 @@ def load_demo(database: Database) -> int:
     )
     created = 0
     for entry in DEMO_ENTRIES:
-        _, was_created = database.upsert_entry(
+        entry_id, was_created = database.upsert_entry(
             source_id=source_id, summary_provider="demo", **entry
         )
+        # Demo data is complete and must remain fully offline when triaged.
+        database.set_enrichment_state(entry_id, "enriched", provider="demo")
         created += int(was_created)
     return created

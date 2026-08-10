@@ -31,6 +31,8 @@ it. Keeping an entry automatically creates its Obsidian note. The resulting
 Markdown contains frontmatter, summary, feed text, original URL, author,
 publication date, and a personal notes section. Herald updates only its marked
 generated blocks, so custom properties and personal notes survive every sync.
+Rich feed content is converted automatically to Obsidian-compatible Markdown,
+preserving common links, headings, lists, emphasis, quotes, code, and tables.
 
 The Papers workspace opens on **Relevant + Unread**, showing the strongest
 current matches. **Filtered** retains everything below the adaptive threshold;
@@ -89,11 +91,13 @@ enriches the paper with free Semantic Scholar/Crossref metadata, extracts local
 keywords, and stores it as unread. Provider responses are cached in the local
 database; no API key or paid service is required.
 
-Keeping a recognized arXiv, DOI, or Semantic Scholar paper returns immediately,
-creates its baseline note, and starts metadata enrichment in the background.
-When free provider metadata arrives, Herald adds identifiers, keywords, topics,
-and outgoing citations, then safely resynchronizes the note. Provider failure
-does not undo Keep or remove the baseline note.
+Keeping a paper with a supported public page returns immediately, creates its
+baseline note, and starts metadata enrichment in the background. Herald inspects
+the linked publication page for author-supplied keywords, then uses free
+Semantic Scholar/Crossref metadata for identifiers, topics, and outgoing
+citations. The note is safely resynchronized afterward; citations to other kept
+Herald papers become direct Obsidian links. Page or provider failure does not
+undo Keep or remove the baseline note.
 
 ## Data and Obsidian
 

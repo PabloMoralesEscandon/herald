@@ -362,6 +362,95 @@ class WebTests(unittest.TestCase):
         note = self.settings.vault_path / self.database.get_entry(entry_id)["exported_path"]
         self.assertIn("arxiv:2608.01234", note.read_text(encoding="utf-8"))
 
+    def test_keep_inspects_generic_paper_page_and_links_saved_citation(self) -> None:
+        source_id = self.database.add_source(
+            "Publisher feed", "https://papers.example.org/feed.xml", "Research"
+        )
+        cited_id, _ = self.database.upsert_entry(
+            source_id=source_id,
+            guid="saved-citation",
+            url="https://doi.org/10.1000/saved",
+            canonical_url="https://doi.org/10.1000/saved",
+            canonical_key="doi:10.1000/saved",
+            title="A saved cited paper",
+        )
+        self.database.add_paper_identifier(
+            cited_id, "doi", "10.1000/saved", is_primary=True
+        )
+        self.database.set_status(cited_id, "kept")
+        self.server.service.export_entry(cited_id)
+
+        entry_id, _ = self.database.upsert_entry(
+            source_id=source_id,
+            guid="publisher-paper",
+            url="https://papers.example.org/work/42",
+            title="An RSS-only title",
+            content="An RSS-only abstract.",
+        )
+        page = b"""<html><head>
+          <meta name="citation_title" content="The enriched paper">
+          <meta name="citation_doi" content="10.1000/citing">
+          <meta name="citation_keywords" content="graph compilers; tensor scheduling">
+          <meta name="citation_abstract" content="The publisher abstract.">
+        </head></html>"""
+        provider = {
+            "paperId": "1111111111111111111111111111111111111111",
+            "externalIds": {"DOI": "10.1000/citing"},
+            "url": "https://www.semanticscholar.org/paper/citing",
+            "title": "The enriched paper",
+            "abstract": "The publisher abstract.",
+            "authors": [{"name": "Metadata Author"}],
+            "fieldsOfStudy": ["Computer Science"],
+            "references": [{
+                "paperId": "2222222222222222222222222222222222222222",
+                "externalIds": {"DOI": "10.1000/saved"},
+                "url": "https://doi.org/10.1000/saved",
+                "title": "A saved cited paper",
+            }],
+        }
+        requested_urls: list[str] = []
+
+        def fetcher(url: str, headers: object, max_bytes: int, timeout: float) -> bytes:
+            requested_urls.append(url)
+            if url == "https://papers.example.org/work/42":
+                return page
+            return json.dumps(provider).encode()
+
+        self.server.service.paper_importer = PaperImporter(
+            self.database, fetcher=fetcher, sleep=lambda _: None, request_delay=0
+        )
+        status, kept = self.request(
+            f"/api/entries/{entry_id}/action",
+            method="POST",
+            payload={"action": "keep"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(kept["status"], "kept")
+
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            entry = self.database.get_entry(entry_id)
+            export = self.database.get_obsidian_export(entry_id)
+            if (
+                entry
+                and entry["enrichment_status"] == "enriched"
+                and export
+                and export["state"] == "synced"
+            ):
+                break
+            time.sleep(0.01)
+        else:
+            self.fail("generic paper page did not finish enrichment")
+
+        note_path = self.settings.vault_path / str(
+            self.database.get_entry(entry_id)["exported_path"]
+        )
+        document = note_path.read_text(encoding="utf-8")
+        cited_path = str(self.database.get_entry(cited_id)["exported_path"])[:-3]
+        self.assertEqual(requested_urls[0], "https://papers.example.org/work/42")
+        self.assertIn('  - "graph compilers"', document)
+        self.assertIn(f"[[{cited_path}|A saved cited paper]]", document)
+
     def test_unkeep_during_enrichment_archives_note_without_recreating_it(self) -> None:
         source_id = self.database.add_source(
             "arXiv Test", "https://example.org/arxiv.xml", "Machine Learning"

@@ -24,6 +24,7 @@ from .papers import (
     extract_keywords,
     normalize_arxiv_id,
     normalize_doi,
+    parse_paper_locator,
 )
 from .relevance import RelevanceCoordinator, RelevanceEngine
 from .sources import (
@@ -418,6 +419,7 @@ class HeraldService:
                 author=entry.author,
                 published_at=entry.published_at,
                 content=entry.content,
+                content_markdown=entry.content_markdown,
                 summary=deterministic_summary(entry.title, entry.content),
                 summary_provider="extractive",
                 content_kind=str(source.get("content_kind") or "paper"),
@@ -823,16 +825,9 @@ class HeraldService:
         if entry.get("enrichment_status") == "enriched":
             return
         url = str(entry.get("canonical_url") or entry.get("url") or "")
-        host = (urlsplit(url).hostname or "").lower()
-        if host not in {
-            "arxiv.org",
-            "www.arxiv.org",
-            "export.arxiv.org",
-            "doi.org",
-            "dx.doi.org",
-            "semanticscholar.org",
-            "www.semanticscholar.org",
-        }:
+        try:
+            parse_paper_locator(url)
+        except (PaperImportError, ValueError):
             return
         entry_id = int(entry["id"])
         with self._enrichment_lock:
@@ -856,7 +851,7 @@ class HeraldService:
         def enrich() -> None:
             try:
                 try:
-                    self.paper_importer.import_paper(url)
+                    self.paper_importer.import_paper(url, inspect_page=True)
                 except PaperImportError as error:
                     self.database.set_enrichment_state(
                         entry_id, "failed", error=str(error)

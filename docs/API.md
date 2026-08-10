@@ -15,7 +15,10 @@ All responses use JSON unless otherwise noted.
 - `POST /api/entries/{id}/export` (backward-compatible retry alias)
 
 An entry contains `id`, `title`, `url`, `author`, `published_at`, `content`,
-`summary`, `status`, `source_title`, `source_category`, and `exported_path`.
+`content_markdown`, `summary`, `status`, `source_title`, `source_category`, and
+`exported_path`. `content` is normalized plain text for Herald's reader and
+summarizer; `content_markdown` preserves supported rich feed structure for
+Obsidian export.
 Ranked pages return `{ "entries": […], "next_cursor": "…" }`, are ordered by
 score, and include `relevance_score`, `relevance_bucket`, explainable
 `relevance_components`, model provenance, and scoring time. The cursor is
@@ -88,6 +91,12 @@ Source records expose `resolved_url`, `etag`, `last_modified`,
 use conditional HTTP requests and treat `304 Not Modified` as a healthy no-op.
 Article URLs are canonicalized and known tracking parameters are removed before
 cross-source deduplication.
+
+Keeping an RSS paper with a supported public page starts background enrichment.
+Herald inspects the publication page for `citation_*` metadata and combines it
+with Semantic Scholar/Crossref data before resynchronizing the Obsidian note.
+Paper keywords are written to note properties; outgoing references are rendered
+as direct Obsidian links when the cited paper is also kept and synchronized.
 
 ## Manual paper import
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -8,6 +9,8 @@ from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 from xml.etree import ElementTree
+
+from .markdown import html_to_markdown
 
 
 class FeedParseError(ValueError):
@@ -22,6 +25,7 @@ class FeedEntry:
     author: str = ""
     published_at: str | None = None
     content: str = ""
+    content_markdown: str = ""
 
 
 class _TextExtractor(HTMLParser):
@@ -92,6 +96,32 @@ def _element_text(element: ElementTree.Element | None) -> str:
     if element is None:
         return ""
     return "".join(element.itertext()).strip()
+
+
+def _element_markup(element: ElementTree.Element | None) -> str:
+    """Keep embedded feed markup, including Atom's namespaced XHTML form."""
+    if element is None:
+        return ""
+    if not list(element):
+        return (element.text or "").strip()
+
+    def serialize(current: ElementTree.Element) -> str:
+        name = _local_name(current.tag)
+        attributes = "".join(
+            f' {key.rsplit("}", 1)[-1]}="{html.escape(value, quote=True)}"'
+            for key, value in current.attrib.items()
+        )
+        inner = html.escape(current.text or "", quote=False)
+        for child in current:
+            inner += serialize(child)
+            inner += html.escape(child.tail or "", quote=False)
+        return f"<{name}{attributes}>{inner}</{name}>"
+
+    prefix = html.escape(element.text or "", quote=False)
+    return prefix + "".join(
+        serialize(child) + html.escape(child.tail or "", quote=False)
+        for child in element
+    )
 
 
 def _plain_text(value: str) -> str:
@@ -234,9 +264,9 @@ def _parse_atom(root: ElementTree.Element) -> list[FeedEntry]:
             _element_text(_child(item, "published", "updated"))
         )
         guid = _element_text(_child(item, "id")) or url
-        content = _plain_text(
-            _element_text(_child(item, "content", "summary"))
-        )
+        content_markup = _element_markup(_child(item, "content", "summary"))
+        content = _plain_text(content_markup)
+        content_markdown = html_to_markdown(content_markup, base_url=url)
         parsed.append(
             FeedEntry(
                 guid=guid or _generated_guid(title, url, published),
@@ -245,6 +275,7 @@ def _parse_atom(root: ElementTree.Element) -> list[FeedEntry]:
                 author=_atom_author(item),
                 published_at=published,
                 content=content,
+                content_markdown=content_markdown,
             )
         )
     return parsed
@@ -268,9 +299,11 @@ def _parse_rss(root: ElementTree.Element) -> list[FeedEntry]:
             _element_text(_child(item, "pubdate", "published", "date", "updated"))
         )
         guid = _element_text(_child(item, "guid", "id")) or url
-        content = _plain_text(
-            _element_text(_child(item, "encoded", "content", "description", "summary"))
+        content_markup = _element_markup(
+            _child(item, "encoded", "content", "description", "summary")
         )
+        content = _plain_text(content_markup)
+        content_markdown = html_to_markdown(content_markup, base_url=url)
         parsed.append(
             FeedEntry(
                 guid=guid or _generated_guid(title, url, published),
@@ -281,6 +314,7 @@ def _parse_rss(root: ElementTree.Element) -> list[FeedEntry]:
                 ),
                 published_at=published,
                 content=content,
+                content_markdown=content_markdown,
             )
         )
     return parsed
