@@ -189,7 +189,18 @@ def _percentile(values: Sequence[float], fraction: float) -> float:
 
 def _entry_text(entry: dict[str, Any]) -> str:
     # Repeating the title implements the product's explicit 2x title weighting.
-    return f"{entry['title']}\n{entry['title']}\n{entry.get('content', '')}".strip()
+    source_context = " ".join(
+        value
+        for value in (
+            str(entry.get("source_title", "")).strip(),
+            str(entry.get("source_category", "")).strip(),
+        )
+        if value
+    )
+    return (
+        f"{entry['title']}\n{entry['title']}\n"
+        f"{entry.get('content', '')}\n{source_context}"
+    ).strip()
 
 
 @dataclass(slots=True)

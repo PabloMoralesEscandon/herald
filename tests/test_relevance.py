@@ -102,6 +102,58 @@ class RelevanceTests(unittest.TestCase):
         self.assertEqual(counts["paper"]["relevant"], 1)
         self.assertEqual(counts["news"]["pending"], 1)
 
+    def test_source_context_recovers_topical_feed_without_whitelisting_brand(self) -> None:
+        apple_ml = self.database.add_source(
+            "Apple Machine Learning Research",
+            "https://machinelearning.apple.com/rss.xml",
+            "Machine Learning",
+            content_kind="news",
+        )
+        apple_newsroom = self.database.add_source(
+            "Apple Newsroom",
+            "https://www.apple.com/newsroom/rss-feed.rss",
+            "Company News",
+            content_kind="news",
+        )
+        ml_ids = []
+        for index, title in enumerate(
+            ("Learning representations on device", "A framework for private inference"),
+            start=1,
+        ):
+            entry_id, _ = self.database.upsert_entry(
+                source_id=apple_ml,
+                guid=f"apple-ml-{index}",
+                url=f"https://machinelearning.apple.com/research/{index}",
+                title=title,
+                content="Technical methods and evaluation results.",
+                content_kind="news",
+            )
+            ml_ids.append(entry_id)
+        sports_id, _ = self.database.upsert_entry(
+            source_id=apple_newsroom,
+            guid="apple-sports",
+            url="https://www.apple.com/newsroom/2026/08/sports-season/",
+            title="Apple celebrates the start of the new sports season",
+            content="Fans can follow teams, fixtures, and match highlights.",
+            content_kind="news",
+        )
+        engine = RelevanceEngine(self.database, BrokenEmbeddings())
+
+        result = engine.rescore("news")
+
+        profile = self.database.get_relevance_profile("news")
+        self.assertGreaterEqual(result["relevant"], 1)
+        self.assertTrue(
+            any(
+                self.database.get_entry_ranking(entry_id, profile["id"])["bucket"]
+                == "relevant"
+                for entry_id in ml_ids
+            )
+        )
+        sports = self.database.get_entry_ranking(sports_id, profile["id"])
+        self.assertEqual(sports["bucket"], "filtered")
+        self.assertEqual(sports["explanation"]["decision"], "score is below threshold")
+
     def test_never_show_overrides_include_and_ties_do_not_create_a_quota(self) -> None:
         engine = RelevanceEngine(self.database)
         profile = engine.update_profile(

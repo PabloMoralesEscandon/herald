@@ -72,7 +72,7 @@ class WebTests(unittest.TestCase):
             html = response.read().decode()
         self.assertEqual(response.status, 200)
         self.assertIn("Herald", html)
-        self.assertIn("/static/app.js?v=23", html)
+        self.assertIn("/static/app.js?v=24", html)
         self.assertIn("/static/styles.css?v=21", html)
         self.assertIn('id="reader-pdf"', html)
         self.assertIn('id="reader-content" class="reader-content" hidden', html)
@@ -134,6 +134,11 @@ class WebTests(unittest.TestCase):
         self.assertIn('document.querySelector("#source-content-kind").value = state.activeKind', script)
         self.assertIn('api("/api/sources", { method: "POST"', script)
         self.assertIn('const refresh = await api("/api/refresh"', script)
+        self.assertIn('return kind === "paper" ? "relevant" : null', script)
+        self.assertIn('elements.relevanceNav.hidden = state.activeKind !== "paper"', script)
+        self.assertIn('document.querySelector("#profile-button").hidden = state.activeKind !== "paper"', script)
+        self.assertIn('state.bucket = defaultBucketForKind(state.activeKind)', script)
+        self.assertIn('if (state.activeKind !== "paper") return;', script)
 
     def test_news_workspace_search_counts_and_profile_contract(self) -> None:
         source_id = self.database.add_source(

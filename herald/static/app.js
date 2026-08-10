@@ -102,6 +102,10 @@ function entriesPath(cursor = null) {
   return `/api/entries?${params}`;
 }
 
+function defaultBucketForKind(kind) {
+  return kind === "paper" ? "relevant" : null;
+}
+
 async function loadData({ preserveSelection = true } = {}) {
   setLoading(true);
   try {
@@ -236,6 +240,7 @@ function renderCounts() {
 }
 
 function renderNavigation() {
+  elements.relevanceNav.hidden = state.activeKind !== "paper";
   elements.kindNav.querySelectorAll("[data-kind]").forEach((button) => {
     const active = button.dataset.kind === state.activeKind;
     button.classList.toggle("active", active);
@@ -255,7 +260,8 @@ function renderChrome() {
   setText("#search-label", `Search ${label.toLowerCase()}`);
   elements.search.placeholder = `Search ${label.toLowerCase()}`;
   document.querySelector("#import-button").hidden = state.activeKind !== "paper";
-  document.querySelector("#profile-button").title = `Tune ${label.toLowerCase()} relevance`;
+  document.querySelector("#profile-button").hidden = state.activeKind !== "paper";
+  document.querySelector("#profile-button").title = "Tune paper relevance";
 }
 
 function renderSourceHealth() {
@@ -270,6 +276,11 @@ function renderSourceHealth() {
 }
 
 function renderRankingBanner() {
+  if (state.activeKind !== "paper") {
+    elements.rankingBanner.hidden = true;
+    elements.rankingBanner.innerHTML = "";
+    return;
+  }
   const job = state.relevanceHealth?.jobs?.[state.activeKind];
   const ranked = state.stats.relevance?.[state.activeKind] || {};
   const pending = ranked.pending || 0;
@@ -560,7 +571,7 @@ function changeWorkspace(event) {
   if (!button || button.dataset.kind === state.activeKind) return;
   state.activeKind = button.dataset.kind;
   state.status = "unread";
-  state.bucket = "relevant";
+  state.bucket = defaultBucketForKind(state.activeKind);
   state.category = "all";
   state.search = "";
   elements.search.value = "";
@@ -569,6 +580,7 @@ function changeWorkspace(event) {
 }
 
 function changeBucketFilter(event) {
+  if (state.activeKind !== "paper") return;
   const button = event.target.closest("[data-bucket]");
   if (!button) return;
   state.bucket = button.dataset.bucket;
@@ -592,7 +604,7 @@ function setCategory(category) {
 
 function clearFilters() {
   state.status = "unread";
-  state.bucket = "relevant";
+  state.bucket = defaultBucketForKind(state.activeKind);
   state.category = "all";
   state.search = "";
   elements.search.value = "";
@@ -600,6 +612,7 @@ function clearFilters() {
 }
 
 async function openProfile() {
+  if (state.activeKind !== "paper") return;
   try {
     state.profile = await api(`/api/profiles/${state.activeKind}`);
     setText("#profile-kind-label", `${state.activeKind === "paper" ? "Paper" : "News"} relevance`);
