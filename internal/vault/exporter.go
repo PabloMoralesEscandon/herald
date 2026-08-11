@@ -57,17 +57,36 @@ func NewExporter(vaultPath, archiveRoot string) (*Exporter, error) {
 	return &Exporter{VaultPath: vault, ArchiveRoot: archive}, nil
 }
 
+// resolvePath canonicalizes a path whether or not it exists yet.
+//
+// It resolves the longest ancestor that does exist and re-appends the part that
+// does not. Resolving only when the whole path exists would be inconsistent:
+// an existing vault would be compared in its resolved form against an archive
+// that has not been created yet in its unresolved form, and containment checks
+// between the two would silently pass. That is not hypothetical — macOS
+// resolves /var to /private/var and Windows expands 8.3 names such as
+// RUNNER~1, so on those systems the two spellings never match.
 func resolvePath(path string) (string, error) {
-	expanded, err := filepath.Abs(expandHome(path))
+	absolute, err := filepath.Abs(expandHome(path))
 	if err != nil {
 		return "", err
 	}
-	// Resolve symlinks in the part of the path that exists, so containment
-	// checks compare real locations.
-	if resolved, err := filepath.EvalSymlinks(expanded); err == nil {
-		return resolved, nil
+	absolute = filepath.Clean(absolute)
+
+	remainder := ""
+	current := absolute
+	for {
+		if resolved, err := filepath.EvalSymlinks(current); err == nil {
+			return filepath.Join(resolved, remainder), nil
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			// Reached the root without finding anything that exists.
+			return absolute, nil
+		}
+		remainder = filepath.Join(filepath.Base(current), remainder)
+		current = parent
 	}
-	return filepath.Clean(expanded), nil
 }
 
 func expandHome(path string) string {

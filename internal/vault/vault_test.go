@@ -40,10 +40,65 @@ func TestArchiveMustLiveOutsideTheVault(t *testing.T) {
 	root := t.TempDir()
 	vaultPath := filepath.Join(root, "vault")
 	os.MkdirAll(vaultPath, 0o755)
-	for _, archive := range []string{vaultPath, filepath.Join(vaultPath, "archive")} {
+	for _, archive := range []string{
+		vaultPath,
+		filepath.Join(vaultPath, "archive"),
+		filepath.Join(vaultPath, "nested", "deeper", "archive"),
+	} {
 		if _, err := NewExporter(vaultPath, archive); err == nil {
 			t.Errorf("NewExporter accepted archive %q inside the vault", archive)
 		}
+	}
+}
+
+// TestArchiveContainmentSurvivesSymlinkedPaths pins the fix for a real defect.
+//
+// Containment was checked by resolving symlinks only for paths that already
+// existed. An existing vault was therefore compared in resolved form against an
+// archive that did not exist yet in unresolved form, so an archive nested
+// inside the vault was accepted. This reproduces the condition directly rather
+// than relying on a platform whose temp directory happens to be symlinked —
+// macOS (/var to /private/var) and Windows (8.3 short names) hit it, plain
+// Linux temp directories do not.
+func TestArchiveContainmentSurvivesSymlinkedPaths(t *testing.T) {
+	root := t.TempDir()
+	real := filepath.Join(root, "real")
+	if err := os.MkdirAll(filepath.Join(real, "vault"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	// The vault is reached through the symlink; the archive does not exist yet.
+	vaultPath := filepath.Join(link, "vault")
+	inside := filepath.Join(vaultPath, "archive")
+	if _, err := NewExporter(vaultPath, inside); err == nil {
+		t.Errorf("NewExporter accepted archive %q inside symlinked vault %q", inside, vaultPath)
+	}
+
+	// The mirror case: the vault named through the symlink and the archive
+	// named through the real path must still be recognized as the same tree.
+	realInside := filepath.Join(real, "vault", "archive")
+	if _, err := NewExporter(vaultPath, realInside); err == nil {
+		t.Errorf("NewExporter accepted archive %q inside the same vault named differently", realInside)
+	}
+
+	// A genuinely separate archive is still accepted, whichever spelling is
+	// used, and both spellings must canonicalize to the same exporter.
+	outside := filepath.Join(link, "archive")
+	exporter, err := NewExporter(vaultPath, outside)
+	if err != nil {
+		t.Fatalf("NewExporter rejected a valid sibling archive: %v", err)
+	}
+	viaReal, err := NewExporter(filepath.Join(real, "vault"), filepath.Join(real, "archive"))
+	if err != nil {
+		t.Fatalf("NewExporter rejected the same layout by real path: %v", err)
+	}
+	if exporter.VaultPath != viaReal.VaultPath || exporter.ArchiveRoot != viaReal.ArchiveRoot {
+		t.Errorf("the same layout canonicalized differently:\n  via link: %s | %s\n  via real: %s | %s",
+			exporter.VaultPath, exporter.ArchiveRoot, viaReal.VaultPath, viaReal.ArchiveRoot)
 	}
 }
 

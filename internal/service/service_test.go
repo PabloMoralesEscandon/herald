@@ -352,3 +352,107 @@ func TestNewsBootstrapTakesOnlyRecentItems(t *testing.T) {
 	}
 	svc.Relevance.Wait()
 }
+
+// TestConfigureObsidianValidatesThePath covers the documented rule that only an
+// existing absolute directory is accepted.
+func TestConfigureObsidianValidatesThePath(t *testing.T) {
+	svc, _ := newService(t)
+	root := t.TempDir()
+	notADirectory := filepath.Join(root, "file.md")
+	if err := os.WriteFile(notADirectory, []byte("x"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	for _, invalid := range []string{
+		"relative/path",
+		filepath.Join(root, "does-not-exist"),
+		notADirectory,
+	} {
+		if _, err := svc.ConfigureObsidian(invalid); err == nil {
+			t.Errorf("ConfigureObsidian accepted %q", invalid)
+		}
+	}
+}
+
+// TestChangingVaultPreservesAnnotations covers the documented move: managed
+// notes are archived out of the old vault and restored into the new one, so a
+// user's own additions follow the move.
+func TestChangingVaultPreservesAnnotations(t *testing.T) {
+	svc, oldVault := newService(t)
+	entryID := seedEntry(t, svc, "paper")
+	if _, err := svc.ChangeStatus(entryID, "kept"); err != nil {
+		t.Fatalf("keep: %v", err)
+	}
+	export, _ := svc.DB.GetObsidianExport(entryID)
+	oldNote := filepath.Join(oldVault, filepath.FromSlash(export.RelativePath))
+	annotated := strings.TrimRight(mustReadFile(t, oldNote), "\n") + "\nMy annotation.\n"
+	if err := os.WriteFile(oldNote, []byte(annotated), 0o644); err != nil {
+		t.Fatalf("annotate: %v", err)
+	}
+
+	newVault := filepath.Join(t.TempDir(), "new-vault")
+	if err := os.MkdirAll(newVault, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	settings, err := svc.ConfigureObsidian(newVault)
+	if err != nil {
+		t.Fatalf("ConfigureObsidian: %v", err)
+	}
+	if !settings.Configured {
+		t.Error("the new vault was not recorded as configured")
+	}
+
+	export, _ = svc.DB.GetObsidianExport(entryID)
+	if export.State != "synced" {
+		t.Fatalf("export state is %q, want synced in the new vault", export.State)
+	}
+	newNote := filepath.Join(newVault, filepath.FromSlash(export.RelativePath))
+	if !strings.Contains(mustReadFile(t, newNote), "My annotation.") {
+		t.Error("the annotation did not follow the move to the new vault")
+	}
+	if _, err := os.Stat(oldNote); !os.IsNotExist(err) {
+		t.Error("the note was left behind in the old vault")
+	}
+	svc.Relevance.Wait()
+	svc.WaitForEnrichment()
+}
+
+// TestConfigureObsidianIsANoOpForTheSameVaultViaSymlink covers path
+// canonicalization at the settings boundary: naming the current vault through a
+// symlink must be recognized as the same vault, not treated as a move that
+// archives every note.
+func TestConfigureObsidianIsANoOpForTheSameVaultViaSymlink(t *testing.T) {
+	svc, vaultPath := newService(t)
+	entryID := seedEntry(t, svc, "paper")
+	if _, err := svc.ChangeStatus(entryID, "kept"); err != nil {
+		t.Fatalf("keep: %v", err)
+	}
+	before, _ := svc.DB.GetObsidianExport(entryID)
+
+	link := filepath.Join(t.TempDir(), "vault-link")
+	if err := os.Symlink(vaultPath, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if _, err := svc.ConfigureObsidian(link); err != nil {
+		t.Fatalf("ConfigureObsidian via symlink: %v", err)
+	}
+
+	after, _ := svc.DB.GetObsidianExport(entryID)
+	if after.State != before.State || after.RelativePath != before.RelativePath {
+		t.Errorf("naming the same vault through a symlink disturbed the note:\n  before: %s %s\n  after:  %s %s",
+			before.State, before.RelativePath, after.State, after.RelativePath)
+	}
+	if _, err := os.Stat(filepath.Join(vaultPath, filepath.FromSlash(after.RelativePath))); err != nil {
+		t.Errorf("the note was archived out of its own vault: %v", err)
+	}
+	svc.Relevance.Wait()
+	svc.WaitForEnrichment()
+}
+
+func mustReadFile(t *testing.T, path string) string {
+	t.Helper()
+	document, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(document)
+}
