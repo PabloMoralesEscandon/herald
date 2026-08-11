@@ -1,0 +1,358 @@
+[
+ [
+  "<h2>Result</h2><p>A <strong>fast</strong> result with\n            <code>x()</code>.</p><ol><li>Measure</li><li>Compare<ul>\n<li>Record details</li></ul></li></ol><blockquote>Reproducible.</blockquote>\n<pre><code class=\"language-python\">print(\"ok\")</code></pre>\n<script>alert(\"unsafe\")</script>",
+  "https://example.org/article"
+ ],
+ [
+  "<ul><li>One<li>Two<ul><li>Nested<li>Again</ul><li>Three</ul>",
+  ""
+ ],
+ [
+  "<a href=\"javascript:alert(1)\">Open</a>",
+  ""
+ ],
+ [
+  "<table><tr><th>Name</th><th>Value</th></tr><tr><td>Latency</td><td>12 ms</td></tr></table>",
+  ""
+ ],
+ [
+  "A **curated** paragraph.\n\n- One\n- Two",
+  ""
+ ],
+ [
+  "<div>\n              <p>Read <a href=\"/background\">the background</a>.</p>\n              <ul><li>First point</li><li>Second point</li></ul>\n            </div>",
+  "https://example.org/news/item"
+ ],
+ [
+  "",
+  ""
+ ],
+ [
+  "   plain text, no tags at all   ",
+  "https://example.org/x"
+ ],
+ [
+  "<p>Unclosed paragraph<p>Second one<p>Third",
+  ""
+ ],
+ [
+  "<table><tr><td>a</td><td>b</td></tr><tr><th>H</th></tr><tr><td>c</td></tr></table>",
+  ""
+ ],
+ [
+  "<table><tbody><tr><td>only</td></tr></tbody></table>",
+  ""
+ ],
+ [
+  "<table></table>",
+  ""
+ ],
+ [
+  "<pre>plain preformatted\n  indented</pre>",
+  ""
+ ],
+ [
+  "<pre><code>no language</code></pre>",
+  ""
+ ],
+ [
+  "<pre><code class=\"lang-go language-go x\">fmt.Println()</code></pre>",
+  ""
+ ],
+ [
+  "<pre>has ``` fence inside</pre>",
+  ""
+ ],
+ [
+  "<code>`backtick`</code>",
+  ""
+ ],
+ [
+  "<code>  spaced  </code>",
+  ""
+ ],
+ [
+  "<code></code>",
+  ""
+ ],
+ [
+  "<em></em><strong></strong><mark></mark><del></del>",
+  ""
+ ],
+ [
+  "<em>a</em><i>b</i><b>c</b><strong>d</strong><s>e</s><strike>f</strike><mark>g</mark>",
+  ""
+ ],
+ [
+  "<h1>One</h1><h2>Two</h2><h3>Three</h3><h4>Four</h4><h5>Five</h5><h6>Six</h6>",
+  ""
+ ],
+ [
+  "<img src=\"/img.png\" alt=\"An [image]\">",
+  "https://example.org/a/b"
+ ],
+ [
+  "<img src=\"javascript:x\" alt=\"bad\">",
+  ""
+ ],
+ [
+  "<img alt=\"no src\">",
+  ""
+ ],
+ [
+  "<a href=\"mailto:x@example.org\">Mail</a>",
+  ""
+ ],
+ [
+  "<a href=\"#anchor\">Anchor</a>",
+  ""
+ ],
+ [
+  "<a href=\"./rel\">Rel</a>",
+  "https://example.org/base/page"
+ ],
+ [
+  "<a href=\"../up\">Up</a>",
+  "https://example.org/base/page"
+ ],
+ [
+  "<a href=\"bare-relative\">Bare</a>",
+  ""
+ ],
+ [
+  "<a href=\"\">Empty href</a>",
+  ""
+ ],
+ [
+  "<a href=\"https://x.org/a b/c?q=1&r=2#f\">Spaces</a>",
+  ""
+ ],
+ [
+  "<a href=\"https://x.org/%20already\">Encoded</a>",
+  ""
+ ],
+ [
+  "<a href=\"https://x.org\"><strong>Bold link</strong></a>",
+  ""
+ ],
+ [
+  "<a href=\"https://x.org\"></a>",
+  ""
+ ],
+ [
+  "<blockquote>Line one\n\nLine two</blockquote>",
+  ""
+ ],
+ [
+  "<blockquote><p>Para one</p><p>Para two</p></blockquote>",
+  ""
+ ],
+ [
+  "<ol><li>a</li></ol><ol><li>b</li></ol>",
+  ""
+ ],
+ [
+  "<ul><li><p>Block in item</p></li></ul>",
+  ""
+ ],
+ [
+  "<ul><li>Outer<ol><li>Inner one</li><li>Inner two</li></ol></li></ul>",
+  ""
+ ],
+ [
+  "<ul></ul>",
+  ""
+ ],
+ [
+  "<ul><li></li></ul>",
+  ""
+ ],
+ [
+  "<hr><p>after</p>",
+  ""
+ ],
+ [
+  "line<br>break",
+  ""
+ ],
+ [
+  "<script>var x = 1;</script><style>.a{}</style><svg><path/></svg><iframe src=\"x\"></iframe>",
+  ""
+ ],
+ [
+  "<template><p>hidden</p></template>",
+  ""
+ ],
+ [
+  "<div><span>span text</span> <small>small</small> <sub>sub</sub> <sup>sup</sup></div>",
+  ""
+ ],
+ [
+  "<article><header>H</header><section>S</section><footer>F</footer></article>",
+  ""
+ ],
+ [
+  "<dl><dt>Term</dt><dd>Definition</dd></dl>",
+  ""
+ ],
+ [
+  "<details><summary>More</summary><p>Body</p></details>",
+  ""
+ ],
+ [
+  "<p>Entities: &amp; &lt; &gt; &quot; &#39; &nbsp; &copy;</p>",
+  ""
+ ],
+ [
+  "<p>Unicode: café — 中文 🎉</p>",
+  ""
+ ],
+ [
+  "<p>a</p>\r\n<p>b</p>\r<p>c</p>",
+  ""
+ ],
+ [
+  "<td>orphan cell</td>",
+  ""
+ ],
+ [
+  "<tr><td>orphan row</td></tr>",
+  ""
+ ],
+ [
+  "<li>orphan item</li>",
+  ""
+ ],
+ [
+  "<p>unclosed <strong>bold",
+  ""
+ ],
+ [
+  "</p></div></strong>stray closers",
+  ""
+ ],
+ [
+  "<P>UPPERCASE TAGS</P><STRONG>bold</STRONG>",
+  ""
+ ],
+ [
+  "<p CLASS=\"x\" >attr case</p>",
+  ""
+ ],
+ [
+  "<a HREF=\"https://x.org\">attr case link</a>",
+  ""
+ ],
+ [
+  "<!-- comment --><p>after comment</p>",
+  ""
+ ],
+ [
+  "<!doctype html><p>after doctype</p>",
+  ""
+ ],
+ [
+  "<table><tr><td>a|b</td><td>c</td></tr></table>",
+  ""
+ ],
+ [
+  "<table><tr><th>A</th></tr><tr><td>x</td><td>extra</td></tr></table>",
+  ""
+ ],
+ [
+  "<table><tr><td><strong>rich</strong> cell</td></tr></table>",
+  ""
+ ],
+ [
+  "<div>   </div><p>   </p>",
+  ""
+ ],
+ [
+  "<p>Trailing spaces   \n   and newlines</p>",
+  ""
+ ],
+ [
+  "<ul><li>Item with <a href=\"/l\">link</a> and <code>code</code></li></ul>",
+  "https://e.org/"
+ ],
+ [
+  "<p>a<br><br>b</p>",
+  ""
+ ],
+ [
+  "<q>quoted</q><kbd>Ctrl</kbd><time>2026</time><u>under</u>",
+  ""
+ ],
+ [
+  "<figure><img src=\"/f.png\" alt=\"fig\"><figcaption>Caption</figcaption></figure>",
+  "https://e.org/"
+ ],
+ [
+  "<p>Nested <em>emphasis <strong>and bold</strong></em> mix</p>",
+  ""
+ ],
+ [
+  "<input type=\"text\"><meta name=\"x\"><link rel=\"y\">",
+  ""
+ ],
+ [
+  "<br/><hr/><img src=\"/x.png\"/>",
+  "https://e.org/"
+ ],
+ [
+  "<div/>self closing div<p/>",
+  ""
+ ],
+ [
+  "<h2>Heading with <a href=\"https://x.org\">link</a></h2>",
+  ""
+ ],
+ [
+  "<p>&lt;p&gt;escaped markup&lt;/p&gt;</p>",
+  ""
+ ],
+ [
+  "Just <b>a</b> fragment with no block",
+  ""
+ ],
+ [
+  "<ul><li>A</li></ul><table><tr><td>B</td></tr></table><blockquote>C</blockquote>",
+  ""
+ ],
+ [
+  "<figure><blockquote>",
+  "https://e.org/"
+ ],
+ [
+  "<blockquote></blockquote>",
+  ""
+ ],
+ [
+  "<blockquote>   </blockquote>",
+  ""
+ ],
+ [
+  "<tr><blockquote></tr>*star*<ul><th><ul><img src='/i.png' alt='x'>",
+  ""
+ ],
+ [
+  "a & bx|ya & b<blockquote></ol><style>&#39;",
+  "https://e.org/"
+ ],
+ [
+  "<strong><div><strong><blockquote><br><ul><input><code class='language-go'> nbsp\t\n",
+  "https://e.org/"
+ ],
+ [
+  "<p>non breaking spaces</p>",
+  ""
+ ],
+ [
+  "<p>a b c</p>",
+  ""
+ ],
+ [
+  "<blockquote>one\r\ntwo\rthree</blockquote>",
+  ""
+ ]
+]

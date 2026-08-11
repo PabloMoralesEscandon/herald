@@ -1,0 +1,8 @@
+<rss version="2.0"><channel>
+   <item><title>A</title><pubDate>2026-08-06T10:00:00Z</pubDate></item>
+   <item><title>B</title><pubDate>Thu, 06 Aug 2026 10:00:00 GMT</pubDate></item>
+   <item><title>C</title><pubDate>2026-08-06</pubDate></item>
+   <item><title>D</title><pubDate>not a date at all</pubDate></item>
+   <item><title>E</title><pubDate>2026-08-06 10:00:00</pubDate></item>
+   <item><title>F</title><pubDate></pubDate></item>
+ </channel></rss>

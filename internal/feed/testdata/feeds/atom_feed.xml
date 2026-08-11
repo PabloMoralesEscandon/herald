@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>ML Papers</title>
+  <entry>
+    <id>https://example.org/papers/2</id>
+    <title>Learning a Controller</title>
+    <updated>2026-08-07T08:30:00Z</updated>
+    <author><name>Ada Researcher</name></author>
+    <author><name>Lin Scientist</name></author>
+    <link rel="related" href="https://example.org/papers/2.pdf" />
+    <link rel="alternate" href="https://example.org/papers/2" />
+    <summary type="html">&lt;p&gt;A short summary.&lt;/p&gt;</summary>
+  </entry>
+</feed>

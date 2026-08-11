@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <title>Official Company Newsroom</title>
+    <item>
+      <guid>launch-recent</guid>
+      <title>Company launches a new accelerator</title>
+      <link>https://example.com/news/accelerator?utm_source=mail&amp;edition=global#top</link>
+      <pubDate>Fri, 07 Aug 2026 09:00:00 GMT</pubDate>
+      <description><![CDATA[<p>A faster accelerator is now available.</p>]]></description>
+      <content:encoded><![CDATA[<p>Official launch details for developers.</p>]]></content:encoded>
+    </item>
+    <item>
+      <guid>launch-old</guid>
+      <title>Company launches an older product</title>
+      <link>https://example.com/news/older</link>
+      <pubDate>Thu, 01 Jan 2026 09:00:00 GMT</pubDate>
+      <description>Older official announcement.</description>
+    </item>
+  </channel>
+</rss>

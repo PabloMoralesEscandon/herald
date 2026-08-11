@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/"
+     xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Systems Lab</title>
+    <item>
+      <guid>paper-1</guid>
+      <title>A &amp; B Scheduling</title>
+      <link>https://example.org/papers/1#abstract</link>
+      <dc:creator>Example Author</dc:creator>
+      <pubDate>Thu, 06 Aug 2026 10:00:00 GMT</pubDate>
+      <description><![CDATA[<p>Short version.</p>]]></description>
+      <content:encoded><![CDATA[<p>Full <strong>paper</strong> abstract.</p>]]></content:encoded>
+    </item>
+  </channel>
+</rss>

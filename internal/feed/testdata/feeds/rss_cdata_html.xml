@@ -1,0 +1,5 @@
+<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel><item><title>Rich</title><link>https://e.org/rich</link>
+  <content:encoded><![CDATA[<h2>Head</h2><p>Body with <a href="/rel">link</a>.</p>
+  <ul><li>one</li><li>two</li></ul><table><tr><th>H</th></tr><tr><td>v</td></tr></table>]]></content:encoded>
+  </item></channel></rss>

@@ -4,20 +4,24 @@ Herald is a local-first inbox for technical news and academic research. It
 collects RSS feeds, supports read/keep/discard triage, creates local summaries,
 and exports kept entries as Obsidian-compatible Markdown.
 
-It requires only Python 3.11 or newer. There are no required third-party Python
-packages, accounts, API keys, hosted services, or paid subscriptions.
+Herald is a single self-contained binary. The dashboard and the source catalog
+are embedded in it, so there is nothing to install alongside it: no runtime, no
+virtual environment, no accounts, API keys, hosted services, or paid
+subscriptions.
 
 ## Install and run
 
-Clone the repository, create an isolated environment, and install Herald:
+Build the binary with Go 1.26 or newer and run it:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate  # Windows PowerShell: .venv\Scripts\Activate.ps1
-python -m pip install -e .
-herald init
-herald serve
+go build -o herald ./cmd/herald
+./herald init
+./herald serve
 ```
+
+The resulting binary is portable and needs no working directory of its own; run
+it from wherever you want your `.herald/` data to live. `go install
+github.com/PabloMoralesEscandon/herald/cmd/herald@latest` also works.
 
 Open <http://127.0.0.1:8765> and stop the server with Ctrl+C. `herald init`
 creates the local data directories and installs the packaged source catalog; it
@@ -47,7 +51,8 @@ categories, and source health.
 chip design and digital circuits, operating systems, machine learning, and
 reinforcement learning, plus 37 official or established editorial news feeds
 covering AI, semiconductors, defense, space, European technology, and startups.
-The catalog is [`herald/data/sources.json`](herald/data/sources.json). Fetch the
+The catalog is [`internal/sources/data/sources.json`](internal/sources/data/sources.json)
+and is embedded in the binary. Fetch the
 enabled feeds from the dashboard or command line:
 
 ```bash
@@ -109,7 +114,7 @@ By default Herald writes everything below `.herald/` in the current directory:
 - `.herald/obsidian-archive/` — recoverable notes removed from the vault
 
 `.herald/`, database files and sidecars, vaults, local exports, `.env` files,
-logs, caches, and virtual environments are excluded by `.gitignore`. The
+logs, caches, and build output are excluded by `.gitignore`. The
 repository contains no fetched articles or reading history. Before pushing,
 still inspect `git status` in case you deliberately placed personal data at a
 nonstandard path.
@@ -172,6 +177,26 @@ always-available TF-IDF fallback, and scoring jobs. Summary
 provenance is shown on every preview and exported note, so Ollama output is
 never confused with the non-AI fallback.
 
+## How the code is organized
+
+```
+cmd/herald/        CLI entry point and the demo fixture
+internal/store/    SQLite schema, additive migrations, and every query
+internal/feed/     RSS 2.0, RSS 1.0/RDF, and Atom parsing; URL canonicalization
+internal/markdown/ feed HTML to Obsidian-compatible Markdown
+internal/paper/    DOI/arXiv/S2 identifiers, metadata providers, SSRF guards
+internal/relevance/ TF-IDF and Ollama scoring, thresholds, background rescoring
+internal/vault/    note rendering and the safe write/archive/restore lifecycle
+internal/service/  ingestion, triage, and vault synchronization
+internal/api/      HTTP routes
+web/               dashboard assets, embedded with embed.FS
+```
+
+`internal/textx` and `internal/urlx` hold small primitives (Unicode-aware
+whitespace handling, URL splitting and percent-encoding) that several packages
+share. They exist so the rules those packages depend on are stated once rather
+than reimplemented slightly differently in each.
+
 ## Security and repository status
 
 Herald's web API is unauthenticated. The default `127.0.0.1` binding is for
@@ -203,8 +228,16 @@ structure; ambiguous files become conflicts and are not overwritten.
 ## Tests
 
 ```bash
-python -m unittest -v
+go test ./...
 ```
 
-The suite uses only the Python standard library and does not require network
-access or Ollama.
+The suite needs no network access and no Ollama. Alongside ordinary unit tests
+it carries golden files under `internal/*/testdata/`, which pin the exact output
+of the pieces whose formats are contracts: HTML-to-Markdown conversion, URL
+canonicalization (the cross-feed deduplication key), feed parsing, and the
+rendered Obsidian note. Those goldens exist because their output is written into
+files users own and annotate, so any change to them should be a deliberate,
+reviewable edit rather than a silent drift.
+
+Run `go test -race ./...` to additionally exercise the background scoring and
+enrichment workers under the race detector.

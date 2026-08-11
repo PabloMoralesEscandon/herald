@@ -1,2 +1,0 @@
-"""Herald test suite."""
-

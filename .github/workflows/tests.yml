@@ -8,18 +8,37 @@ permissions:
   contents: read
 
 jobs:
-  unittest:
-    runs-on: ubuntu-latest
+  test:
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13"]
+        # Herald ships as a single binary, so the build is checked on every
+        # platform it is expected to run on.
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-go@v5
         with:
-          python-version: ${{ matrix.python-version }}
-          cache: pip
-      - run: python -m pip install --upgrade pip
-      - run: python -m pip install .
-      - run: python -m unittest -v
+          go-version: "1.26"
+          cache: true
+      - run: go build ./...
+      - run: go vet ./...
+      - run: go test -race ./...
+
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l ./cmd ./internal ./web)"
+          if [ -n "$unformatted" ]; then
+            echo "These files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi

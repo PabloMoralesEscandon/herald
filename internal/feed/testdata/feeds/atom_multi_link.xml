@@ -1,0 +1,8 @@
+<feed xmlns="http://www.w3.org/2005/Atom"><entry>
+   <id>x</id><title>Multi</title>
+   <link rel="related" href="https://e.org/rel"/>
+   <link rel="alternate" href="https://e.org/alt"/>
+   <link href="https://e.org/bare"/>
+   <author><name>A</name></author><author>B Inline</author>
+   <published>2026-01-01T00:00:00Z</published><updated>2027-01-01T00:00:00Z</updated>
+ </entry></feed>

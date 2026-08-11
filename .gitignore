@@ -1,13 +1,17 @@
-# Herald runtime data (personal articles, reading state, exports, and vaults)
+# Herald runtime data (personal articles, reading state, exports, and vaults).
+# These are anchored to the repository root so they cannot shadow source
+# directories: an unanchored "vault/" also matches internal/vault/, which would
+# quietly drop that package from a commit and break the build for anyone
+# cloning the repository.
 .herald/
 *.db*
 *.sqlite*
 *.sqlite3*
-vault/
-obsidian-archive/
-exports/
-source-exports/
-herald-sources.json
+/vault/
+/obsidian-archive/
+/exports/
+/source-exports/
+/herald-sources.json
 
 # Local configuration and secrets
 .env
@@ -20,32 +24,16 @@ herald-sources.json
 .pypirc
 .npmrc
 
-# Python environments, caches, test output, and packages
-__pycache__/
-*.py[cod]
-*$py.class
-.venv/
-venv/
-env/
-ENV/
+# Go build output, test artifacts, and local tooling
+/herald
+/herald.exe
+/dist/
+/build/
+*.test
+*.out
+coverage.txt
+coverage.html
 .direnv/
-.python-version
-.pytest_cache/
-.mypy_cache/
-.pyright/
-.ruff_cache/
-.tox/
-.nox/
-.coverage
-.coverage.*
-coverage.xml
-htmlcov/
-coverage/
-dist/
-build/
-wheelhouse/
-*.egg-info/
-*.egg
 
 # Logs, temporary files, editors, and operating systems
 *.log

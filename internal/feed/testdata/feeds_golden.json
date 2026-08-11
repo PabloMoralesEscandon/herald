@@ -1,0 +1,189 @@
+{
+ "atom_feed.xml": [
+  {
+   "author": "Ada Researcher, Lin Scientist",
+   "content": "A short summary.",
+   "content_markdown": "A short summary.",
+   "guid": "https://example.org/papers/2",
+   "published_at": "2026-08-07T08:30:00+00:00",
+   "title": "Learning a Controller",
+   "url": "https://example.org/papers/2"
+  }
+ ],
+ "atom_multi_link.xml": [
+  {
+   "author": "A, B Inline",
+   "content": "",
+   "content_markdown": "",
+   "guid": "x",
+   "published_at": "2026-01-01T00:00:00+00:00",
+   "title": "Multi",
+   "url": "https://e.org/alt"
+  }
+ ],
+ "atom_no_id.xml": [
+  {
+   "author": "",
+   "content": "Body text",
+   "content_markdown": "Body text",
+   "guid": "https://e.org/related",
+   "published_at": "2026-02-03T04:05:06+00:00",
+   "title": "No identifier",
+   "url": "https://e.org/related"
+  }
+ ],
+ "atom_xhtml.xml": [
+  {
+   "author": "",
+   "content": "Read the background . First point Second point",
+   "content_markdown": "Read [the background](<https://example.org/background>).\n\n- First point\n- Second point",
+   "guid": "rich-entry",
+   "published_at": null,
+   "title": "Rich entry",
+   "url": "https://example.org/news/item"
+  }
+ ],
+ "news_feed.xml": [
+  {
+   "author": "",
+   "content": "Official launch details for developers.",
+   "content_markdown": "Official launch details for developers.",
+   "guid": "launch-recent",
+   "published_at": "2026-08-07T09:00:00+00:00",
+   "title": "Company launches a new accelerator",
+   "url": "https://example.com/news/accelerator?edition=global"
+  },
+  {
+   "author": "",
+   "content": "Older official announcement.",
+   "content_markdown": "Older official announcement.",
+   "guid": "launch-old",
+   "published_at": "2026-01-01T09:00:00+00:00",
+   "title": "Company launches an older product",
+   "url": "https://example.com/news/older"
+  }
+ ],
+ "rdf_feed.xml": [
+  {
+   "author": "",
+   "content": "RDF description",
+   "content_markdown": "RDF description",
+   "guid": "https://example.org/rdf-item",
+   "published_at": null,
+   "title": "RDF Item",
+   "url": "https://example.org/rdf-item"
+  }
+ ],
+ "rdf_full.xml": [
+  {
+   "author": "Writer",
+   "content": "Desc one",
+   "content_markdown": "Desc one",
+   "guid": "https://e.org/1",
+   "published_at": "2026-03-04T05:06:07+00:00",
+   "title": "One",
+   "url": "https://e.org/1"
+  },
+  {
+   "author": "",
+   "content": "",
+   "content_markdown": "",
+   "guid": "https://e.org/2",
+   "published_at": null,
+   "title": "Two",
+   "url": "https://e.org/2"
+  }
+ ],
+ "rss_cdata_html.xml": [
+  {
+   "author": "",
+   "content": "Head Body with link . one two H v",
+   "content_markdown": "## Head\n\nBody with [link](<https://e.org/rel>).\n\n- one\n- two\n\n| H |\n| --- |\n| v |",
+   "guid": "https://e.org/rich",
+   "published_at": null,
+   "title": "Rich",
+   "url": "https://e.org/rich"
+  }
+ ],
+ "rss_dates.xml": [
+  {
+   "author": "",
+   "content": "",
+   "content_markdown": "",
+   "guid": "herald:185f013671ddfaa13617948d50940ba72fa12c750a5ce491a7592664a47c5369",
+   "published_at": "2026-08-06T10:00:00+00:00",
+   "title": "A",
+   "url": ""
+  },
+  {
+   "author": "",
+   "content": "",
+   "content_markdown": "",
+   "guid": "herald:5bb2b4ae48b37b5e0f4c2dc5b144f0ea4bd4d2cdf3d0a005449608859a6f47a4",
+   "published_at": "2026-08-06T10:00:00+00:00",
+   "title": "B",
+   "url": ""
+  },
+  {
+   "author": "",
+   "content": "",
+   "content_markdown": "",
+   "guid": "herald:f77f2c06dd9a70b22171e38db75e8c5876bc4b6b360e1923d5254f76c7aa4f72",
+   "published_at": "2026-08-06T00:00:00+00:00",
+   "title": "C",
+   "url": ""
+  },
+  {
+   "author": "",
+   "content": "",
+   "content_markdown": "",
+   "guid": "herald:c0e16c67e8fd788a971916ff8416a644ca880cc5cffad2e6c6b7cc8a5bc9f145",
+   "published_at": "not a date at all",
+   "title": "D",
+   "url": ""
+  },
+  {
+   "author": "",
+   "content": "",
+   "content_markdown": "",
+   "guid": "herald:763c460c719a1b2cce73e70e5123175e2d2fd241db878e829c5a5192ad2bcb7f",
+   "published_at": "2026-08-06T10:00:00+00:00",
+   "title": "E",
+   "url": ""
+  },
+  {
+   "author": "",
+   "content": "",
+   "content_markdown": "",
+   "guid": "herald:d312ead24560dfbcc03a3af9cd7bea1c45fe3a7a9c3f82920f82cb58c58698d5",
+   "published_at": null,
+   "title": "F",
+   "url": ""
+  }
+ ],
+ "rss_entities.xml": {
+  "error": "FeedParseError"
+ },
+ "rss_feed.xml": [
+  {
+   "author": "Example Author",
+   "content": "Full paper abstract.",
+   "content_markdown": "Full **paper** abstract.",
+   "guid": "paper-1",
+   "published_at": "2026-08-06T10:00:00+00:00",
+   "title": "A & B Scheduling",
+   "url": "https://example.org/papers/1"
+  }
+ ],
+ "rss_minimal.xml": [
+  {
+   "author": "",
+   "content": "",
+   "content_markdown": "",
+   "guid": "herald:0457382b8d69cba64dff3db9eed28f17ae28fd4cfbbd74b08a9b207676d6150b",
+   "published_at": null,
+   "title": "Bare",
+   "url": ""
+  }
+ ]
+}

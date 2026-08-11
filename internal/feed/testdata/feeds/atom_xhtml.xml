@@ -1,0 +1,12 @@
+<feed xmlns="http://www.w3.org/2005/Atom"
+            xmlns:xhtml="http://www.w3.org/1999/xhtml">
+          <entry>
+            <id>rich-entry</id>
+            <title>Rich entry</title>
+            <link href="https://example.org/news/item" />
+            <content type="xhtml"><xhtml:div>
+              <xhtml:p>Read <xhtml:a href="/background">the background</xhtml:a>.</xhtml:p>
+              <xhtml:ul><xhtml:li>First point</xhtml:li><xhtml:li>Second point</xhtml:li></xhtml:ul>
+            </xhtml:div></content>
+          </entry>
+        </feed>
