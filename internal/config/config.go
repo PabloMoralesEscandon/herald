@@ -57,6 +57,13 @@ func (s Settings) ArchiveRoot() string {
 	return filepath.Join(s.DataDir, "obsidian-archive")
 }
 
+// PDFRoot is where the PDFs an extraction read, and the ones a user uploaded,
+// are kept. They live outside the vault: they are Herald's working files, not
+// notes, and an Obsidian vault full of binaries is nobody's idea of a vault.
+func (s Settings) PDFRoot() string {
+	return filepath.Join(s.DataDir, "pdfs")
+}
+
 // EnsureDirectories creates the data, database, and vault directories.
 func (s Settings) EnsureDirectories() error {
 	for _, dir := range []string{s.DataDir, filepath.Dir(s.DatabasePath), s.VaultPath} {

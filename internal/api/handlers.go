@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -190,6 +191,67 @@ func (s *Server) retryObsidian(w http.ResponseWriter, r *http.Request) {
 		path = &destination
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"entry": entry, "path": path})
+}
+
+func (s *Server) getFullText(w http.ResponseWriter, r *http.Request) {
+	entryID, ok := pathID(r)
+	if !ok {
+		writeError(w, http.StatusNotFound, "Entry not found")
+		return
+	}
+	result, err := s.Service.GetFullText(entryID)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) retryFullText(w http.ResponseWriter, r *http.Request) {
+	entryID, ok := pathID(r)
+	if !ok {
+		writeError(w, http.StatusNotFound, "Entry not found")
+		return
+	}
+	result, err := s.Service.RetryFullText(entryID)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+// uploadFullTextPDF accepts the PDF a user supplies for a paper Herald could
+// not read openly.
+//
+// The body is the file itself rather than a JSON envelope: a PDF is binary,
+// and base64 in JSON would inflate a large paper by a third for no benefit.
+func (s *Server) uploadFullTextPDF(w http.ResponseWriter, r *http.Request) {
+	entryID, ok := pathID(r)
+	if !ok {
+		writeError(w, http.StatusNotFound, "Entry not found")
+		return
+	}
+	if r.ContentLength > service.MaxUploadedPDFBytes {
+		writeError(w, http.StatusRequestEntityTooLarge, "The uploaded PDF is larger than Herald's limit")
+		return
+	}
+	document, err := io.ReadAll(io.LimitReader(r.Body, service.MaxUploadedPDFBytes+1))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "The upload could not be read")
+		return
+	}
+	if len(document) > service.MaxUploadedPDFBytes {
+		writeError(w, http.StatusRequestEntityTooLarge, "The uploaded PDF is larger than Herald's limit")
+		return
+	}
+
+	result, err := s.Service.UploadPaperPDF(entryID, document)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (s *Server) stats(w http.ResponseWriter, r *http.Request) {

@@ -85,12 +85,26 @@ func (s *Service) noteFor(entryID int64) (*vault.Note, error) {
 				title = "Untitled paper"
 			}
 			note.References = append(note.References, vault.Reference{
+				Key: reference.ReferenceKey, Label: reference.BibLabel,
 				Title: title, ExternalScheme: reference.ExternalScheme,
 				ExternalID: reference.ExternalID, CitedURL: reference.CitedURL,
 				CitedStatus:       deref(reference.CitedStatus),
 				CitedExportState:  deref(reference.CitedExportState),
 				CitedObsidianPath: deref(reference.CitedObsidianPath),
 			})
+		}
+
+		record, err := s.DB.GetFullText(entryID)
+		if err != nil {
+			return nil, err
+		}
+		if record != nil {
+			note.FullText = &vault.FullText{
+				State: record.State, SourceKind: record.SourceKind,
+				SourceURL: record.SourceURL, Format: record.Format,
+				Markdown: record.Markdown, Truncated: record.Truncated,
+				Error: record.Error,
+			}
 		}
 	}
 

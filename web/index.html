@@ -153,6 +153,18 @@
                 </div>
                 <p id="reader-enrichment-error" class="detail-error" hidden></p>
               </section>
+              <section id="fulltext-panel" class="detail-panel fulltext-panel" aria-labelledby="fulltext-heading" hidden>
+                <div class="detail-heading">
+                  <div><p class="section-label" id="fulltext-heading">Full text</p><strong id="fulltext-state"></strong></div>
+                  <span id="fulltext-source" class="metadata-state"></span>
+                </div>
+                <p id="fulltext-message" class="fulltext-message"></p>
+                <div class="fulltext-actions">
+                  <button class="primary-button" id="fulltext-upload" type="button">Upload PDF</button>
+                  <button class="quiet-button" id="fulltext-retry" type="button">Try again</button>
+                  <input id="fulltext-file" type="file" accept="application/pdf,.pdf" hidden>
+                </div>
+              </section>
               <section class="summary-card" aria-labelledby="summary-heading">
                 <div class="summary-heading">
                   <div><span class="spark">✦</span><h3 id="summary-heading">Herald summary</h3></div>

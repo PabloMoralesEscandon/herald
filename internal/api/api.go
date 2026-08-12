@@ -66,6 +66,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/entries/{id}/export", s.exportEntry)
 	s.mux.HandleFunc("POST /api/entries/{id}/obsidian/retry", s.retryObsidian)
 
+	s.mux.HandleFunc("GET /api/entries/{id}/fulltext", s.getFullText)
+	s.mux.HandleFunc("POST /api/entries/{id}/fulltext/retry", s.retryFullText)
+	s.mux.HandleFunc("POST /api/entries/{id}/fulltext/pdf", s.uploadFullTextPDF)
+
 	s.mux.HandleFunc("GET /api/stats", s.stats)
 	s.mux.HandleFunc("GET /api/sources", s.listSources)
 	s.mux.HandleFunc("GET /api/sources/export", s.exportSources)

@@ -430,6 +430,7 @@ var legacyKeys = map[string]bool{
 	"status": true, "summary_provider": true, "summary_model": true,
 	"summary_generated_at": true, "tags": true, "type": true, "publisher": true,
 	"canonical_source": true, "updated_at": true, "keywords": true, "topics": true,
+	"fulltext_state": true, "fulltext_source": true, "fulltext_url": true,
 	"relevance_score": true, "relevance_bucket": true, "relevance_model": true,
 	"relevance_scored_at": true, "relevance_reasons": true,
 }

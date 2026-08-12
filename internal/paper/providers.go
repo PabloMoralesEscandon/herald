@@ -20,7 +20,7 @@ const (
 
 // semanticScholarFields is the field selection requested from the graph API.
 const semanticScholarFields = "paperId,externalIds,url,title,abstract,authors,publicationDate,year," +
-	"fieldsOfStudy,references.paperId,references.externalIds," +
+	"fieldsOfStudy,openAccessPdf,references.paperId,references.externalIds," +
 	"references.url,references.title"
 
 // requestJSON fetches and caches a provider response.
@@ -100,8 +100,9 @@ func (i *Importer) semanticScholar(locator Locator) (Metadata, error) {
 	paperID := prefix + locator.Value
 	requestURL := semanticScholarAPI + url.PathEscape(paperID) + "?fields=" + semanticScholarFields
 	// The cache key is versioned because older responses were requested
-	// without references and would otherwise suppress citation enrichment.
-	cacheKey := strings.ToLower(paperID) + ":references-v1"
+	// without references, and later without the open-access location; a stale
+	// entry would otherwise suppress the field that was added after it.
+	cacheKey := strings.ToLower(paperID) + ":references-v2"
 
 	payload, err := i.requestJSON("semantic-scholar", cacheKey, requestURL)
 	if err != nil {
@@ -156,16 +157,66 @@ func (i *Importer) semanticScholar(locator Locator) (Metadata, error) {
 		year = fmt.Sprintf("%d", int(value))
 	}
 	return Metadata{
-		Title:       title,
-		Authors:     authors,
-		Abstract:    cleanText(stringField(payload, "abstract")),
-		PublishedAt: normalizeDate(stringField(payload, "publicationDate"), year),
-		URL:         cleanText(stringField(payload, "url")),
-		Identifiers: identifiers,
-		Topics:      topics,
-		References:  semanticScholarReferences(payload["references"]),
-		Provider:    "semantic-scholar",
+		Title:         title,
+		Authors:       authors,
+		Abstract:      cleanText(stringField(payload, "abstract")),
+		PublishedAt:   normalizeDate(stringField(payload, "publicationDate"), year),
+		URL:           cleanText(stringField(payload, "url")),
+		Identifiers:   identifiers,
+		Topics:        topics,
+		References:    semanticScholarReferences(payload["references"]),
+		OpenAccessPDF: openAccessLocation(payload),
+		Provider:      "semantic-scholar",
 	}, nil
+}
+
+// openAccessLocation reads the open-access PDF a provider reports.
+//
+// Only an HTTPS location is accepted, and only the one the provider itself
+// labels as openly available: this is the copy the publisher or repository has
+// chosen to offer, which is the only kind Herald will fetch.
+func openAccessLocation(payload map[string]any) string {
+	record, ok := payload["openAccessPdf"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	location := strings.TrimSpace(stringField(record, "url"))
+	if location == "" || !strings.HasPrefix(strings.ToLower(location), "https://") {
+		return ""
+	}
+	// The status field distinguishes a genuinely open copy from a record that
+	// merely knows where the article lives.
+	if status := strings.ToLower(strings.TrimSpace(stringField(record, "status"))); status == "closed" {
+		return ""
+	}
+	return location
+}
+
+// OpenAccessPDF asks Semantic Scholar where a paper's open-access PDF is.
+//
+// Responses are cached for a week alongside the rest of the paper's metadata,
+// so calling this right after enrichment normally costs no request at all.
+func (i *Importer) OpenAccessPDF(scheme, value string) string {
+	scheme = strings.ToLower(strings.TrimSpace(scheme))
+	if value = strings.TrimSpace(value); value == "" {
+		return ""
+	}
+	switch scheme {
+	case "doi", "arxiv", "s2":
+	default:
+		return ""
+	}
+	if i.lastRequestAt == nil {
+		i.lastRequestAt = map[string]time.Time{}
+	}
+	if i.now == nil {
+		i.now = time.Now
+	}
+	metadata, err := i.semanticScholar(Locator{Scheme: scheme, Value: value})
+	if err != nil {
+		return ""
+	}
+	return metadata.OpenAccessPDF
 }
 
 // semanticScholarReferences normalizes the cited-paper list.

@@ -76,6 +76,9 @@ document.addEventListener("DOMContentLoaded", () => {
   document.querySelector("#import-sources").addEventListener("click", () => document.querySelector("#source-import-file").click());
   document.querySelector("#source-import-file").addEventListener("change", importSources);
   document.querySelector("#reference-list").addEventListener("click", addReferenceFromEvent);
+  document.querySelector("#fulltext-upload").addEventListener("click", () => document.querySelector("#fulltext-file").click());
+  document.querySelector("#fulltext-file").addEventListener("change", uploadFullTextPDF);
+  document.querySelector("#fulltext-retry").addEventListener("click", retryFullText);
   document.querySelectorAll("[data-close-dialog]").forEach((button) => button.addEventListener("click", () => {
     document.querySelector(`#${button.dataset.closeDialog}`).close();
   }));
@@ -398,6 +401,7 @@ function renderReader(loading = false) {
   document.querySelector("#discard-action").classList.toggle("active", entry.status === "discarded");
   renderRelevance(entry);
   renderMetadata(entry);
+  renderFullText(entry);
   renderReferences(entry, loading);
   renderExport(entry);
 }
@@ -459,6 +463,139 @@ function renderReferences(entry, loading) {
       </div>
     </article>`;
   }).join("");
+}
+
+// FULLTEXT_STATES describes each extraction state to the reader: what it says,
+// and which actions make sense while it holds.
+const FULLTEXT_STATES = {
+  extracted: {
+    label: "Extracted",
+    message: "The full article is in this note, and its citations link to any cited paper you have kept.",
+    upload: false,
+    retry: true,
+    tone: "ok",
+  },
+  needs_pdf: {
+    label: "Needs your PDF",
+    message: "Herald could not find an openly available copy of this paper, so the note holds the abstract only. Upload the PDF to add the full text and link its citations.",
+    upload: true,
+    retry: true,
+    tone: "warn",
+  },
+  failed: {
+    label: "Extraction failed",
+    message: "Herald could not read this paper's text on its last attempt.",
+    upload: true,
+    retry: true,
+    tone: "warn",
+  },
+  extracting: {
+    label: "Extracting…",
+    message: "Herald is reading the article now. This note updates when it finishes.",
+    upload: false,
+    retry: false,
+    tone: "busy",
+  },
+  pending: {
+    label: "Queued",
+    message: "Herald will read this paper's text shortly.",
+    upload: true,
+    retry: true,
+    tone: "busy",
+  },
+};
+
+const FULLTEXT_SOURCES = {
+  "arxiv-html": "arXiv HTML",
+  "arxiv-pdf": "arXiv PDF",
+  "open-access-pdf": "Open-access PDF",
+  "page-pdf": "Publisher PDF",
+  upload: "Your upload",
+};
+
+function renderFullText(entry) {
+  const panel = document.querySelector("#fulltext-panel");
+  const record = entry.fulltext;
+  // Only a kept paper has a note to complete, so the panel stays out of the
+  // way everywhere else.
+  if (entry.content_kind !== "paper" || entry.status !== "kept" || !record) {
+    panel.hidden = true;
+    return;
+  }
+  const descriptor = FULLTEXT_STATES[record.state];
+  if (!descriptor) {
+    panel.hidden = true;
+    return;
+  }
+
+  panel.hidden = false;
+  panel.dataset.tone = descriptor.tone;
+  setText("#fulltext-state", descriptor.label);
+
+  const source = FULLTEXT_SOURCES[record.source_kind];
+  const size = record.character_count
+    ? `${Math.round(record.character_count / 1000)}k characters`
+    : "";
+  setText("#fulltext-source", [source, size].filter(Boolean).join(" · "));
+
+  // A recorded reason is more useful than the generic sentence, so it wins.
+  const detail = record.state === "extracted" ? "" : (record.error || "");
+  setText("#fulltext-message", detail || descriptor.message);
+
+  const upload = document.querySelector("#fulltext-upload");
+  const retry = document.querySelector("#fulltext-retry");
+  upload.hidden = !descriptor.upload;
+  retry.hidden = !descriptor.retry;
+  upload.disabled = false;
+  retry.disabled = false;
+  retry.textContent = record.state === "extracted" ? "Re-extract" : "Try again";
+}
+
+async function uploadFullTextPDF(event) {
+  const input = event.currentTarget;
+  const file = input.files?.[0];
+  const entry = selectedEntry();
+  // The input is cleared so choosing the same file twice still fires a change.
+  input.value = "";
+  if (!file || !entry) return;
+
+  const button = document.querySelector("#fulltext-upload");
+  button.disabled = true;
+  button.textContent = "Reading…";
+  try {
+    const response = await fetch(`/api/entries/${entry.id}/fulltext/pdf`, {
+      method: "POST",
+      headers: { "Content-Type": "application/pdf" },
+      body: file,
+    });
+    let payload;
+    try { payload = await response.json(); } catch { payload = null; }
+    if (!response.ok) throw new Error(payload?.error || `Upload failed (${response.status})`);
+    updateSelected(mergeEntry(entry, payload.entry));
+    showToast("Full text added from your PDF");
+  } catch (error) { showToast(error.message, true); }
+  finally {
+    button.disabled = false;
+    button.textContent = "Upload PDF";
+  }
+}
+
+async function retryFullText() {
+  const entry = selectedEntry();
+  if (!entry) return;
+  const button = document.querySelector("#fulltext-retry");
+  button.disabled = true;
+  button.textContent = "Working…";
+  try {
+    const result = await api(`/api/entries/${entry.id}/fulltext/retry`, { method: "POST", body: "{}" });
+    updateSelected(mergeEntry(entry, result.entry));
+    const state = result.fulltext?.state;
+    showToast(
+      state === "extracted" ? "Full text extracted" : "Herald still could not read this paper",
+      state !== "extracted",
+    );
+  } catch (error) { showToast(error.message, true); }
+  finally { button.disabled = false; }
 }
 
 function renderExport(entry) {

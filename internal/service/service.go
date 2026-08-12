@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/PabloMoralesEscandon/herald/internal/feed"
+	"github.com/PabloMoralesEscandon/herald/internal/fulltext"
 	"github.com/PabloMoralesEscandon/herald/internal/paper"
 	"github.com/PabloMoralesEscandon/herald/internal/relevance"
 	"github.com/PabloMoralesEscandon/herald/internal/sources"
@@ -35,7 +36,16 @@ type Service struct {
 	// AutoEnrichKept starts background metadata enrichment when a paper is
 	// kept. The CLI leaves it off so scripted runs stay deterministic.
 	AutoEnrichKept bool
-	Now            func() time.Time
+	// AutoExtractFullText additionally reads the article's own text after a
+	// paper is kept. It follows the same rule as enrichment: off for scripted
+	// runs, so nothing reaches the network unless the user asked it to.
+	AutoExtractFullText bool
+	// Extractor overrides the full-text extractor, which is how tests run the
+	// whole pipeline without touching the network.
+	Extractor *fulltext.Extractor
+	// PDFRoot is where extracted and uploaded PDFs are stored.
+	PDFRoot string
+	Now     func() time.Time
 
 	exporterOverride *vault.Exporter
 
@@ -51,6 +61,7 @@ type Service struct {
 	transitionMutex sync.Mutex
 	enrichingMutex  sync.Mutex
 	enriching       map[int64]bool
+	extracting      map[int64]bool
 	enrichmentWait  sync.WaitGroup
 }
 
@@ -65,8 +76,14 @@ func New(db *store.DB, options Options) *Service {
 		DefaultVault:   options.DefaultVault,
 		ArchiveRoot:    options.ArchiveRoot,
 		AutoEnrichKept: options.AutoEnrichKept,
-		Now:            options.Now,
-		enriching:      map[int64]bool{},
+
+		AutoExtractFullText: options.AutoExtractFullText,
+		Extractor:           options.Extractor,
+		PDFRoot:             options.PDFRoot,
+
+		Now:        options.Now,
+		enriching:  map[int64]bool{},
+		extracting: map[int64]bool{},
 	}
 	if service.Fetcher == nil {
 		service.Fetcher = FetchFeed
@@ -89,15 +106,18 @@ func New(db *store.DB, options Options) *Service {
 
 // Options are the injectable collaborators.
 type Options struct {
-	Summarizer     summary.Provider
-	Relevance      *relevance.Coordinator
-	Importer       *paper.Importer
-	Fetcher        FeedFetcher
-	Exporter       *vault.Exporter
-	DefaultVault   string
-	ArchiveRoot    string
-	AutoEnrichKept bool
-	Now            func() time.Time
+	Summarizer          summary.Provider
+	Relevance           *relevance.Coordinator
+	Importer            *paper.Importer
+	Fetcher             FeedFetcher
+	Exporter            *vault.Exporter
+	Extractor           *fulltext.Extractor
+	DefaultVault        string
+	ArchiveRoot         string
+	PDFRoot             string
+	AutoEnrichKept      bool
+	AutoExtractFullText bool
+	Now                 func() time.Time
 }
 
 // Exporter returns the exporter for the configured vault.
@@ -249,5 +269,9 @@ func (s *Service) EntryWithObsidianState(entryID int64) (map[string]any, error) 
 	if err != nil {
 		return nil, err
 	}
-	return withObsidianExport(entry, export), nil
+	text, err := s.DB.GetFullText(entryID)
+	if err != nil {
+		return nil, err
+	}
+	return withObsidianExport(entry, export, text), nil
 }

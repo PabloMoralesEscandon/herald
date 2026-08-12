@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/PabloMoralesEscandon/herald/internal/fulltext"
 	"github.com/PabloMoralesEscandon/herald/internal/markdown"
 	"github.com/PabloMoralesEscandon/herald/internal/urlx"
 )
@@ -60,14 +61,35 @@ type Note struct {
 	Identifiers []string
 	References  []Reference
 	Relevance   *Relevance
+	FullText    *FullText
 
 	// ObsidianRelativePath is the note's existing location, used to keep a
 	// note in place once it has been written.
 	ObsidianRelativePath string
 }
 
+// FullText is the article body Herald extracted, and where it came from.
+type FullText struct {
+	// State is the extraction state. Only "extracted" renders a body; the
+	// states that need the user's help render a notice instead.
+	State      string
+	SourceKind string
+	SourceURL  string
+	Format     string
+	// Markdown still carries citation placeholders. They are resolved during
+	// rendering, because whether a citation can become a link depends on
+	// whether the cited paper is in the vault right now.
+	Markdown  string
+	Truncated bool
+	Error     string
+}
+
 // Reference is one rendered citation.
 type Reference struct {
+	// Key is the reference's stable identity, which is how a citation
+	// placeholder in the article body finds the work it points at.
+	Key            string
+	Label          string
 	Title          string
 	ExternalScheme string
 	ExternalID     string
@@ -199,6 +221,16 @@ func paperProperties(note *Note) []string {
 	lines := []string{
 		"enrichment_provider: " + yamlString(note.EnrichmentProvider),
 	}
+	state, sourceKind, sourceURL := "not_applicable", "", ""
+	if note.FullText != nil {
+		state = note.FullText.State
+		sourceKind, sourceURL = note.FullText.SourceKind, note.FullText.SourceURL
+	}
+	lines = append(lines,
+		"fulltext_state: "+yamlString(state),
+		"fulltext_source: "+yamlString(sourceKind),
+		"fulltext_url: "+yamlString(sourceURL),
+	)
 	lines = append(lines, yamlList("identifiers", note.Identifiers)...)
 	lines = append(lines, yamlList("keywords", note.Keywords)...)
 	return append(lines, yamlList("topics", note.Topics)...)
@@ -314,6 +346,36 @@ func externalReferenceURL(reference Reference) string {
 	return strings.TrimSpace(reference.CitedURL)
 }
 
+// noteLinkTarget reports the vault path a cited paper's note lives at, when
+// that paper is itself kept and synced.
+//
+// Both conditions are required. A note that is not written yet cannot be
+// linked to, and an entry that is no longer kept has had its note archived out
+// of the vault, so a link would dangle.
+func noteLinkTarget(reference Reference) (string, bool) {
+	relativePath := strings.TrimSpace(reference.CitedObsidianPath)
+	if reference.CitedStatus != "kept" || reference.CitedExportState != "synced" ||
+		!strings.HasPrefix(relativePath, "Herald/Papers/") ||
+		!strings.HasSuffix(relativePath, ".md") {
+		return "", false
+	}
+	target := strings.NewReplacer("|", " ", "]", " ", "[", " ").Replace(
+		strings.TrimSuffix(relativePath, ".md"))
+	return target, true
+}
+
+// wikilink builds an Obsidian link with an alias.
+func wikilink(target, alias string) string {
+	// The alias cannot contain the characters that delimit a link, so they are
+	// replaced rather than escaped: Obsidian has no escape for them.
+	alias = strings.NewReplacer("|", " ", "[", "(", "]", ")").Replace(alias)
+	alias = strings.TrimSpace(alias)
+	if alias == "" {
+		return "[[" + target + "]]"
+	}
+	return "[[" + target + "|" + alias + "]]"
+}
+
 // referenceMarkdown renders one citation.
 //
 // A cited paper that is itself kept and synced becomes a real Obsidian link, so
@@ -323,20 +385,212 @@ func referenceMarkdown(reference Reference) string {
 	if title == "" {
 		title = "Untitled paper"
 	}
-	relativePath := strings.TrimSpace(reference.CitedObsidianPath)
-	internal := reference.CitedStatus == "kept" &&
-		reference.CitedExportState == "synced" &&
-		strings.HasPrefix(relativePath, "Herald/Papers/") &&
-		strings.HasSuffix(relativePath, ".md")
-	if internal {
-		target := strings.NewReplacer("|", " ", "]", " ").Replace(
-			strings.TrimSuffix(relativePath, ".md"))
-		return "- [[" + target + "|" + strings.ReplaceAll(title, "|", " ") + "]]"
+	// The printed label is parenthesized rather than bracketed: brackets are
+	// not legal inside either a Markdown link's text or an Obsidian alias, and
+	// this line is rendered as one or the other.
+	if label := strings.TrimSpace(reference.Label); label != "" {
+		title = "(" + markdownLabel(label) + ") " + title
+	}
+	if target, ok := noteLinkTarget(reference); ok {
+		return "- " + wikilink(target, title)
 	}
 	if external := externalReferenceURL(reference); external != "" {
 		return "- [" + title + "](" + external + ")"
 	}
 	return "- " + title
+}
+
+// citationResolver turns one in-text citation placeholder into what belongs in
+// the note.
+//
+// This is where a citation becomes a connection. When the cited paper is in
+// the vault the marker becomes a real Obsidian link, so following a citation
+// inside one paper's note opens the other paper's note and the graph view
+// shows the edge. When it is not, the marker keeps exactly the text the
+// article printed, because a note is a document the user reads, not a database
+// dump, and an unresolved citation should read as the article wrote it.
+func citationResolver(references []Reference) func(key, display string) string {
+	byKey := make(map[string]Reference, len(references))
+	for _, reference := range references {
+		if key := strings.TrimSpace(reference.Key); key != "" {
+			byKey[key] = reference
+		}
+	}
+	return func(key, display string) string {
+		reference, ok := byKey[key]
+		if !ok {
+			return display
+		}
+		target, ok := noteLinkTarget(reference)
+		if !ok {
+			return display
+		}
+		return wikilink(target, display)
+	}
+}
+
+// fullTextSection renders the extracted article body with its citations
+// resolved.
+func fullTextSection(note *Note) string {
+	if note.ContentKind == "news" || note.FullText == nil {
+		return ""
+	}
+	body := strings.TrimSpace(note.FullText.Markdown)
+	if note.FullText.State != "extracted" || body == "" {
+		return ""
+	}
+	resolved := strings.TrimSpace(unwrapBracketedLinks(
+		fulltext.ResolveCitations(body, citationResolver(note.References))))
+	if resolved == "" {
+		return ""
+	}
+
+	lines := []string{"## Full text", ""}
+	if provenance := fullTextProvenance(note.FullText); provenance != "" {
+		lines = append(lines, provenance, "")
+	}
+	lines = append(lines, resolved)
+	if note.FullText.Truncated {
+		lines = append(lines, "",
+			"*This article was longer than Herald's extraction limit; the remainder was not included.*")
+	}
+	return strings.Join(lines, "\n")
+}
+
+// unwrapBracketedLinks removes the literal brackets a citation was printed in
+// once its contents have become Obsidian links.
+//
+// An article prints "[12]" and Herald turns the number into a link, which
+// would otherwise leave "[[[note|12]]]" in the note. Three consecutive
+// brackets are ambiguous markup, so the printed pair is dropped and the link
+// itself carries the citation. Brackets around ordinary text are untouched.
+func unwrapBracketedLinks(text string) string {
+	var out strings.Builder
+	out.Grow(len(text))
+
+	for index := 0; index < len(text); {
+		if text[index] != '[' {
+			out.WriteByte(text[index])
+			index++
+			continue
+		}
+		// A wikilink is copied whole so its own brackets are never scanned.
+		if end, ok := wikilinkEnd(text, index); ok {
+			out.WriteString(text[index:end])
+			index = end
+			continue
+		}
+		end, ok := matchingBracket(text, index)
+		if !ok {
+			out.WriteByte(text[index])
+			index++
+			continue
+		}
+		inner := text[index+1 : end]
+		if strings.Contains(inner, "[[") {
+			out.WriteString(inner)
+		} else {
+			out.WriteString(text[index : end+1])
+		}
+		index = end + 1
+	}
+	return out.String()
+}
+
+// wikilinkEnd reports the offset just past a "[[target|alias]]" starting at
+// index.
+func wikilinkEnd(text string, index int) (int, bool) {
+	if !strings.HasPrefix(text[index:], "[[") {
+		return 0, false
+	}
+	closing := strings.Index(text[index:], "]]")
+	if closing < 0 {
+		return 0, false
+	}
+	// A nested "[" before the terminator means this is not a wikilink.
+	if strings.ContainsAny(text[index+2:index+closing], "[]") {
+		return 0, false
+	}
+	return index + closing + 2, true
+}
+
+// matchingBracket finds the "]" closing a literal "[", stepping over any
+// wikilinks in between.
+func matchingBracket(text string, index int) (int, bool) {
+	for scan := index + 1; scan < len(text); {
+		switch {
+		case strings.HasPrefix(text[scan:], "[["):
+			end, ok := wikilinkEnd(text, scan)
+			if !ok {
+				return 0, false
+			}
+			scan = end
+		case text[scan] == ']':
+			return scan, true
+		case text[scan] == '[':
+			// A second literal bracket means this is not a simple span.
+			return 0, false
+		default:
+			scan++
+		}
+	}
+	return 0, false
+}
+
+// fullTextProvenance states where the text came from, so a reader can always
+// tell extracted text from the feed's own words.
+func fullTextProvenance(text *FullText) string {
+	source := map[string]string{
+		"arxiv-html":      "the arXiv HTML rendering",
+		"arxiv-pdf":       "the arXiv PDF",
+		"open-access-pdf": "an open-access PDF",
+		"page-pdf":        "the publisher's PDF",
+		"upload":          "a PDF you uploaded",
+	}[text.SourceKind]
+	if source == "" {
+		return ""
+	}
+	line := "*Extracted from " + source
+	if text.SourceURL != "" {
+		line += " (<" + text.SourceURL + ">)"
+	}
+	return line + ".*"
+}
+
+// fullTextNotice explains, inside the note itself, that the article body is
+// missing and what would fix it.
+//
+// It is written into the note as well as shown in the dashboard because the
+// vault outlives any one session: someone reading this note in Obsidian months
+// later should be able to see that the body is absent by design, not lost.
+func fullTextNotice(note *Note) string {
+	if note.ContentKind == "news" || note.FullText == nil {
+		return ""
+	}
+	switch note.FullText.State {
+	case "needs_pdf":
+		return strings.Join([]string{
+			"> [!warning] Full text not available automatically",
+			"> Herald found no openly available copy of this paper, so this note holds " +
+				"the abstract only.",
+			"> Upload the PDF in Herald to add the full text and turn its citations into links.",
+		}, "\n")
+	case "failed":
+		reason := strings.TrimSpace(note.FullText.Error)
+		lines := []string{
+			"> [!warning] Full text could not be extracted",
+			"> Herald could not read the article's text on its last attempt.",
+		}
+		if reason != "" {
+			lines = append(lines, "> Reason: "+markdownLabel(reason))
+		}
+		lines = append(lines, "> Retry in Herald, or upload the PDF yourself.")
+		return strings.Join(lines, "\n")
+	case "extracting", "pending":
+		return "> [!info] Full text extraction is still running\n" +
+			"> Herald is fetching this paper's text and will update the note when it finishes."
+	}
+	return ""
 }
 
 func managedBody(note *Note) string {
@@ -398,18 +652,28 @@ func managedBody(note *Note) string {
 		"> Method: " + provenance,
 		">",
 		blockquote(summaryText),
+	}
+	if notice := fullTextNotice(note); notice != "" {
+		sections = append(sections, "", notice)
+	}
+	sections = append(sections,
 		"",
 		contentHeading,
 		"",
 		strings.TrimSpace(content),
+	)
+	if body := fullTextSection(note); body != "" {
+		sections = append(sections, "", body)
+	}
+	sections = append(sections,
 		"",
 		"## Source",
 		"",
 		original,
-		"- " + publicationLabel + ": " + sourceTitle,
-		"- Author: " + author,
-		"- Published: " + published,
-	}
+		"- "+publicationLabel+": "+sourceTitle,
+		"- Author: "+author,
+		"- Published: "+published,
+	)
 	if !isNews {
 		sections = append(sections, "", "## References", "")
 		if len(note.References) == 0 {

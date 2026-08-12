@@ -94,12 +94,20 @@ func (s *Service) changeStatusLocked(entryID int64, status string) (map[string]a
 	if err != nil {
 		return nil, nil, err
 	}
-	return withObsidianExport(current, export), enrichCandidate, nil
+	text, err := s.DB.GetFullText(entryID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return withObsidianExport(current, export, text), enrichCandidate, nil
 }
 
-// withObsidianExport merges an entry and its note state into the response
-// shape the API documents.
-func withObsidianExport(entry *store.Entry, export *store.Export) map[string]any {
+// withObsidianExport merges an entry, its note state, and its extraction state
+// into the response shape the API documents.
+//
+// The extraction state travels with the entry because the dashboard needs it
+// on every entry it draws: a paper waiting for the user's PDF has to say so
+// wherever it appears, not only after a second request.
+func withObsidianExport(entry *store.Entry, export *store.Export, text *store.FullText) map[string]any {
 	document, err := json.Marshal(entry)
 	if err != nil {
 		return nil
@@ -112,6 +120,11 @@ func withObsidianExport(entry *store.Entry, export *store.Export) map[string]any
 		result["obsidian_export"] = nil
 	} else {
 		result["obsidian_export"] = export
+	}
+	if text == nil {
+		result["fulltext"] = nil
+	} else {
+		result["fulltext"] = text
 	}
 	return result
 }
@@ -167,7 +180,8 @@ func (s *Service) releaseEnrichment(entryID int64) {
 // the already-synced note as current while that second step is in flight.
 // The caller holds the lock.
 func (s *Service) markEnrichmentPending(entry *store.Entry) {
-	if _, ok := s.enrichmentCandidate(entry); !ok {
+	_, enriching := s.enrichmentCandidate(entry)
+	if !enriching && !s.fullTextCandidate(entry) {
 		return
 	}
 	if s.isEnriching(entry.ID) {
@@ -184,13 +198,21 @@ func (s *Service) markEnrichmentPending(entry *store.Entry) {
 	})
 }
 
-// startKeptEnrichment begins background metadata enrichment for a kept paper.
+// startKeptEnrichment begins the background work a kept paper needs: metadata
+// enrichment, then extraction of the article's own text.
 //
-// Keeping returns immediately with a baseline note; provider lookups happen
-// here. A page or provider failure never undoes the Keep or removes the note.
+// Keeping returns immediately with a baseline note; provider lookups and
+// article fetches happen here. No failure in either step undoes the Keep or
+// removes the note.
+//
+// The order is not incidental. Extraction needs the arXiv identifier or DOI
+// that enrichment discovers, so it can only run once enrichment has committed
+// them. The note is written in between, so the enriched note appears promptly
+// rather than waiting behind a whole PDF download.
 func (s *Service) startKeptEnrichment(entry *store.Entry) {
-	url, ok := s.enrichmentCandidate(entry)
-	if !ok {
+	url, needsEnrichment := s.enrichmentCandidate(entry)
+	needsExtraction := s.fullTextCandidate(entry)
+	if !needsEnrichment && !needsExtraction {
 		return
 	}
 	entryID := entry.ID
@@ -203,26 +225,44 @@ func (s *Service) startKeptEnrichment(entry *store.Entry) {
 		defer s.enrichmentWait.Done()
 		defer s.releaseEnrichment(entryID)
 
-		if _, err := s.Importer.Import(url, true); err != nil {
-			_, _ = s.DB.SetEnrichmentState(entryID, "failed", store.EnrichmentState{
-				Error: err.Error(),
-			})
+		if needsEnrichment {
+			if _, err := s.Importer.Import(url, true); err != nil {
+				_, _ = s.DB.SetEnrichmentState(entryID, "failed", store.EnrichmentState{
+					Error: err.Error(),
+				})
+			}
 		}
-
-		// Serialize the final status check and note write with triage. If the
-		// user un-kept the paper during provider I/O, ChangeStatus has already
-		// archived the note and this worker must not recreate it.
-		s.transitionMutex.Lock()
-		defer s.transitionMutex.Unlock()
-		current, err := s.DB.GetEntry(entryID)
-		if err != nil || current == nil || current.Status != "kept" {
+		if !s.finishEnrichment(entryID) {
 			return
 		}
-		// Clear the in-flight marker before the final write so that write is
-		// recorded as synced rather than pending.
-		s.releaseEnrichment(entryID)
-		_, _ = s.exportEntry(entryID, true, true)
+		if !needsExtraction || !s.claimExtraction(entryID) {
+			return
+		}
+		defer s.releaseExtraction(entryID)
+		s.runFullTextExtraction(entryID)
+		s.resyncAfterExtraction(entryID)
 	}()
+}
+
+// finishEnrichment writes the enriched note and reports whether the paper is
+// still kept.
+//
+// It serializes the final status check and note write with triage. If the user
+// un-kept the paper during provider I/O, ChangeStatus has already archived the
+// note and this worker must not recreate it.
+func (s *Service) finishEnrichment(entryID int64) bool {
+	s.transitionMutex.Lock()
+	defer s.transitionMutex.Unlock()
+
+	current, err := s.DB.GetEntry(entryID)
+	if err != nil || current == nil || current.Status != "kept" {
+		return false
+	}
+	// Clear the in-flight marker before the final write so that write is
+	// recorded as synced rather than pending.
+	s.releaseEnrichment(entryID)
+	_, _ = s.exportEntry(entryID, true, true)
+	return true
 }
 
 // WaitForEnrichment blocks until background enrichment settles. It exists for

@@ -104,6 +104,47 @@ citations. The note is safely resynchronized afterward; citations to other kept
 Herald papers become direct Obsidian links. Page or provider failure does not
 undo Keep or remove the baseline note.
 
+## Full article text and citation links
+
+Keeping a paper does not just save its abstract. Herald reads the article
+itself and writes it into the note under **Full text**, with the paper's own
+headings, paragraphs, lists, tables, captions, and mathematics preserved.
+
+It reads from the openly available copy, preferring arXiv's HTML rendering
+where one exists, then the arXiv PDF, then an open-access PDF a free metadata
+provider reports, then the PDF a publication page declares for itself. PDFs are
+parsed in-process: there is no `pdftotext` to install and nothing is sent
+anywhere. Two-column layouts, ligatures, hyphens broken across lines, running
+heads, and page numbers are all handled, so the note reads as prose rather than
+as a dump of page fragments.
+
+**In-text citations become Obsidian links.** When a paper cites a work that is
+also kept in your vault, the marker in the running text is a real link to that
+paper's note, and the two are connected in Obsidian's graph view. A citation to
+something you have not kept stays exactly as the article printed it, and it
+turns into a link by itself the moment you keep the cited paper. Herald links
+only citations it can resolve to a parsed bibliography entry, so a bracketed
+matrix index or a parenthesized date is never turned into a false connection.
+
+Not every paper has an open copy. When there is none, the Keep still succeeds
+and the note is still written; the entry is marked **Needs your PDF**, the note
+carries a notice saying so, and the dashboard offers an **Upload PDF** button
+next to the kept paper. Uploading your copy runs it through the same pipeline,
+including citation linking. Extraction failures never undo a Keep or remove a
+note, and every note records where its text came from in its
+`fulltext_state` and `fulltext_source` properties.
+
+From the command line:
+
+```bash
+herald fulltext                      # work through kept papers awaiting text
+herald fulltext --entry 42           # extract one paper
+herald fulltext --entry 42 --pdf paper.pdf   # read a local PDF, offline
+```
+
+Extracted and uploaded PDFs are kept in `.herald/pdfs/`, outside the vault, so
+a re-extraction can run offline and the file you supplied is not lost.
+
 ## Data and Obsidian
 
 By default Herald writes everything below `.herald/` in the current directory:
@@ -112,6 +153,7 @@ By default Herald writes everything below `.herald/` in the current directory:
 - `.herald/vault/Herald/Papers/*.md` — kept paper notes
 - `.herald/vault/Herald/News/<publisher>/*.md` — kept news notes
 - `.herald/obsidian-archive/` — recoverable notes removed from the vault
+- `.herald/pdfs/` — PDFs Herald extracted from, and the ones you uploaded
 
 `.herald/`, database files and sidecars, vaults, local exports, `.env` files,
 logs, caches, and build output are excluded by `.gitignore`. The
@@ -185,6 +227,8 @@ internal/store/    SQLite schema, additive migrations, and every query
 internal/feed/     RSS 2.0, RSS 1.0/RDF, and Atom parsing; URL canonicalization
 internal/markdown/ feed HTML to Obsidian-compatible Markdown
 internal/paper/    DOI/arXiv/S2 identifiers, metadata providers, SSRF guards
+internal/pdf/      PDF parsing and positioned text extraction, no dependencies
+internal/fulltext/ article HTML and PDF to Markdown, bibliographies, citations
 internal/relevance/ TF-IDF and Ollama scoring, thresholds, background rescoring
 internal/vault/    note rendering and the safe write/archive/restore lifecycle
 internal/service/  ingestion, triage, and vault synchronization

@@ -46,6 +46,8 @@ Commands:
                           Backfill identifiers, keywords, rankings, and notes
   refresh                 Fetch all enabled sources
   summarize <entry-id>    Summarize one entry
+  fulltext [--limit N] [--entry ID] [--pdf FILE]
+                          Extract kept papers' article text, or read a PDF you supply
   export <entry-id>       Export one kept entry
   export-kept             Export every kept entry
   serve                   Start the local web application
@@ -93,6 +95,7 @@ func run(args []string) int {
 		Relevance:    relevance.NewCoordinator(engine),
 		DefaultVault: settings.VaultPath,
 		ArchiveRoot:  settings.ArchiveRoot(),
+		PDFRoot:      settings.PDFRoot(),
 	})
 
 	switch command {
@@ -173,6 +176,9 @@ func run(args []string) int {
 			"summary": result.Text, "provider": result.Provider,
 		})
 
+	case "fulltext":
+		return fullTextCommand(svc, args[1:])
+
 	case "export":
 		entryID, err := requireID(args[1:], "export")
 		if err != nil {
@@ -215,9 +221,12 @@ func serve(settings config.Settings, db *store.DB) int {
 		Relevance:    relevance.NewCoordinator(engine),
 		DefaultVault: settings.VaultPath,
 		ArchiveRoot:  settings.ArchiveRoot(),
+		PDFRoot:      settings.PDFRoot(),
 		// Keeping a paper enriches it in the background while the dashboard
-		// stays responsive.
-		AutoEnrichKept: true,
+		// stays responsive, then reads the article's own text from whatever
+		// open copy exists.
+		AutoEnrichKept:      true,
+		AutoExtractFullText: true,
 	})
 	if err := svc.ReconcileObsidian(); err != nil {
 		return fail("could not reconcile the vault: %v", err)
@@ -344,6 +353,58 @@ func readManifest(path string) ([]byte, error) {
 		return nil, fmt.Errorf("Source manifest exceeds the 1 MB limit")
 	}
 	return os.ReadFile(source)
+}
+
+// fullTextCommand extracts article text from the command line.
+//
+// It has to be asked for explicitly, because unlike the rest of the CLI it
+// reaches the network. Extraction runs one paper at a time on purpose: a
+// backlog of kept papers should not turn into a burst of requests at arXiv.
+func fullTextCommand(svc *service.Service, args []string) int {
+	flags := flag.NewFlagSet("fulltext", flag.ContinueOnError)
+	limit := flags.Int("limit", 25, "how many papers to extract in this run")
+	entryID := flags.Int64("entry", 0, "extract one entry instead of the backlog")
+	pdfPath := flags.String("pdf", "",
+		"read this local PDF for --entry instead of fetching an open copy")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+
+	// Reading a local file is the offline path, so it stays available even
+	// though the rest of the command does not.
+	if *pdfPath != "" {
+		if *entryID == 0 {
+			return fail("--pdf also needs --entry")
+		}
+		document, err := os.ReadFile(*pdfPath)
+		if err != nil {
+			return fail("could not read the PDF: %v", err)
+		}
+		result, err := svc.UploadPaperPDF(*entryID, document)
+		if err != nil {
+			return fail("could not extract that PDF: %v", err)
+		}
+		return printJSON(result.FullText)
+	}
+
+	svc.AutoExtractFullText = true
+	if *entryID != 0 {
+		result, err := svc.RetryFullText(*entryID)
+		if err != nil {
+			return fail("could not extract: %v", err)
+		}
+		return printJSON(result.FullText)
+	}
+
+	processed, err := svc.ExtractPendingFullText(*limit)
+	if err != nil {
+		return fail("extraction failed after %d papers: %v", processed, err)
+	}
+	counts, err := svc.DB.FullTextCounts()
+	if err != nil {
+		return fail("could not read extraction counts: %v", err)
+	}
+	return printJSON(map[string]any{"processed": processed, "states": counts})
 }
 
 func requireID(args []string, command string) (int64, error) {

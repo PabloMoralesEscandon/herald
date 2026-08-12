@@ -98,6 +98,8 @@ CREATE TABLE IF NOT EXISTS paper_references (
     cited_url TEXT NOT NULL DEFAULT '',
     position INTEGER,
     provider TEXT NOT NULL DEFAULT '',
+    bib_label TEXT NOT NULL DEFAULT '',
+    bib_raw TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     UNIQUE (citing_entry_id, reference_key)
@@ -203,6 +205,30 @@ CREATE TABLE IF NOT EXISTS obsidian_exports (
 CREATE INDEX IF NOT EXISTS obsidian_exports_state_idx
     ON obsidian_exports(state, updated_at);
 
+CREATE TABLE IF NOT EXISTS paper_fulltext (
+    entry_id INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE,
+    state TEXT NOT NULL DEFAULT 'pending'
+        CHECK (state IN ('pending', 'extracting', 'extracted', 'needs_pdf',
+                         'failed', 'not_applicable')),
+    source_kind TEXT NOT NULL DEFAULT '',
+    source_url TEXT NOT NULL DEFAULT '',
+    format TEXT NOT NULL DEFAULT '',
+    markdown TEXT NOT NULL DEFAULT '',
+    character_count INTEGER NOT NULL DEFAULT 0,
+    reference_count INTEGER NOT NULL DEFAULT 0,
+    truncated INTEGER NOT NULL DEFAULT 0,
+    pdf_path TEXT NOT NULL DEFAULT '',
+    pdf_bytes INTEGER NOT NULL DEFAULT 0,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    error TEXT NOT NULL DEFAULT '',
+    attempted_at TEXT,
+    extracted_at TEXT,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS paper_fulltext_state_idx
+    ON paper_fulltext(state, updated_at);
+
 CREATE TABLE IF NOT EXISTS obsidian_archives (
     id INTEGER PRIMARY KEY,
     entry_id INTEGER NOT NULL REFERENCES entries(id) ON DELETE CASCADE,
@@ -245,6 +271,16 @@ var entryMigrations = []struct{ name, definition string }{
 	{"updated_at", "TEXT"},
 }
 
+// referenceMigrations add the columns that record what a citation looked like
+// in the citing article's own bibliography. They are separate from the
+// provider-supplied columns because the two describe the same edge from
+// different sources: a provider knows the identifier, only the article knows
+// the label it printed.
+var referenceMigrations = []struct{ name, definition string }{
+	{"bib_label", "TEXT NOT NULL DEFAULT ''"},
+	{"bib_raw", "TEXT NOT NULL DEFAULT ''"},
+}
+
 // backfillSQL repairs rows written by older versions. Each statement is
 // idempotent and touches only columns that were previously unset.
 var backfillSQL = []string{
@@ -260,4 +296,4 @@ var backfillSQL = []string{
 }
 
 // schemaVersion is written to PRAGMA user_version after a successful open.
-const schemaVersion = 5
+const schemaVersion = 6

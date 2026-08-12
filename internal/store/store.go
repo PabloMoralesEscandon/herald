@@ -100,6 +100,11 @@ func (d *DB) Initialize() error {
 		if _, err := tx.Exec(extendedSchemaSQL); err != nil {
 			return fmt.Errorf("create extended schema: %w", err)
 		}
+		// paper_references is created by the extended schema, so its own
+		// migrations can only run once that statement has executed.
+		if err := addMissingColumns(tx, "paper_references", referenceMigrations); err != nil {
+			return err
+		}
 		for _, statement := range backfillSQL {
 			if _, err := tx.Exec(statement); err != nil {
 				return fmt.Errorf("backfill: %w", err)

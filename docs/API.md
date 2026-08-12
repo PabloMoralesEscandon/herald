@@ -25,6 +25,39 @@ score, and include `relevance_score`, `relevance_bucket`, explainable
 opaque. `filtered` entries remain stored and can be paged exactly like
 `relevant` entries.
 
+## Full article text
+
+- `GET /api/entries/{id}/fulltext`
+- `POST /api/entries/{id}/fulltext/retry`
+- `POST /api/entries/{id}/fulltext/pdf` with the PDF itself as the request body
+  and `Content-Type: application/pdf`
+
+Every entry response also carries a `fulltext` object, or `null` for entries
+Herald has not tried to extract. It reports `state`, `source_kind`,
+`source_url`, `format`, `character_count`, `reference_count`, `truncated`,
+`pdf_path`, `pdf_bytes`, `attempts`, `error`, and timestamps.
+
+`state` is one of:
+
+| State | Meaning |
+| --- | --- |
+| `pending` | Queued; nothing has been fetched yet |
+| `extracting` | An extraction is running now |
+| `extracted` | The note carries the article text |
+| `needs_pdf` | No openly available copy exists; upload one to finish the note |
+| `failed` | A transient failure worth retrying |
+| `not_applicable` | Nothing to extract, such as a news item |
+
+`source_kind` records where the text came from: `arxiv-html`, `arxiv-pdf`,
+`open-access-pdf`, `page-pdf`, or `upload`.
+
+Herald reads full text only from a copy the publisher has itself made openly
+available, or from a PDF supplied through the upload endpoint. `needs_pdf` is a
+normal outcome rather than an error: the entry stays kept, the note is written
+with the abstract and a notice, and the upload endpoint completes it. Uploads
+are capped at 100 MB and must be PDFs; a scan with no text layer is rejected
+with an explanation rather than stored as an empty article.
+
 ## Relevance profiles
 
 - `GET /api/profiles/paper`

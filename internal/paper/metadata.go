@@ -31,7 +31,10 @@ type Metadata struct {
 	Topics           []string
 	SuppliedKeywords []string
 	References       []ReferenceMetadata
-	Provider         string
+	// OpenAccessPDF is a PDF the provider reports as openly available. It is
+	// the publisher's or repository's own open copy, never a paywalled one.
+	OpenAccessPDF string
+	Provider      string
 }
 
 var wordPattern = regexp.MustCompile(`(?i)[a-z](?:[a-z0-9+.-]*[a-z0-9+])?`)

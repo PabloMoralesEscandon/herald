@@ -301,8 +301,10 @@ func TestProviderResponseIsCached(t *testing.T) {
 		t.Errorf("the second import made %d extra requests, want 0", requests-before)
 	}
 
+	// The key carries a version so that adding a requested field invalidates
+	// responses cached before that field existed.
 	cached, err := importer.DB.GetProviderCache(
-		"semantic-scholar", "doi:10.1145/example:references-v1", time.Hour)
+		"semantic-scholar", "doi:10.1145/example:references-v2", time.Hour)
 	if err != nil || cached == nil {
 		t.Fatalf("provider cache miss: %v", err)
 	}

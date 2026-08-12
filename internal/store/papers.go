@@ -27,8 +27,12 @@ type PaperReference struct {
 	CitedURL       string `json:"cited_url"`
 	Position       *int64 `json:"position"`
 	Provider       string `json:"provider"`
-	CreatedAt      string `json:"created_at"`
-	UpdatedAt      string `json:"updated_at"`
+	// BibLabel and BibRaw are how the citing article itself printed this
+	// reference, filled in when its full text was extracted.
+	BibLabel  string `json:"bib_label"`
+	BibRaw    string `json:"bib_raw"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
 
 	// Joined target columns, present when the cited paper is in Herald.
 	TargetTitle       *string `json:"target_title"`
@@ -234,6 +238,7 @@ func (d *DB) GetPaperReference(referenceID int64) (*PaperReference, error) {
 			paper_references.external_scheme, paper_references.external_id,
 			paper_references.cited_title, paper_references.cited_url,
 			paper_references.position, paper_references.provider,
+			paper_references.bib_label, paper_references.bib_raw,
 			paper_references.created_at, paper_references.updated_at,
 			target.title, target.canonical_url, target.status, target.exported_path
 		FROM paper_references
@@ -243,7 +248,8 @@ func (d *DB) GetPaperReference(referenceID int64) (*PaperReference, error) {
 	err := row.Scan(&reference.ID, &reference.CitingEntryID, &reference.CitedEntryID,
 		&reference.ReferenceKey, &reference.ExternalScheme, &reference.ExternalID,
 		&reference.CitedTitle, &reference.CitedURL, &reference.Position,
-		&reference.Provider, &reference.CreatedAt, &reference.UpdatedAt,
+		&reference.Provider, &reference.BibLabel, &reference.BibRaw,
+		&reference.CreatedAt, &reference.UpdatedAt,
 		&reference.TargetTitle, &reference.TargetURL, &reference.CitedStatus,
 		&reference.CitedExportedPath)
 	if err == sql.ErrNoRows {
@@ -260,6 +266,7 @@ func (d *DB) ListPaperReferences(entryID int64) ([]*PaperReference, error) {
 			paper_references.external_scheme, paper_references.external_id,
 			paper_references.cited_title, paper_references.cited_url,
 			paper_references.position, paper_references.provider,
+			paper_references.bib_label, paper_references.bib_raw,
 			paper_references.created_at, paper_references.updated_at,
 			entries.title, entries.canonical_url, entries.status,
 			entries.exported_path, obsidian_exports.state, obsidian_exports.relative_path
@@ -280,6 +287,7 @@ func (d *DB) ListPaperReferences(entryID int64) ([]*PaperReference, error) {
 			&reference.CitedEntryID, &reference.ReferenceKey,
 			&reference.ExternalScheme, &reference.ExternalID, &reference.CitedTitle,
 			&reference.CitedURL, &reference.Position, &reference.Provider,
+			&reference.BibLabel, &reference.BibRaw,
 			&reference.CreatedAt, &reference.UpdatedAt, &reference.TargetTitle,
 			&reference.TargetURL, &reference.CitedStatus, &reference.CitedExportedPath,
 			&reference.CitedExportState, &reference.CitedObsidianPath); err != nil {
