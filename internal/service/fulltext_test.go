@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -253,7 +254,7 @@ func TestUploadedPDFCompletesTheNote(t *testing.T) {
 	}
 	if info, err := os.Stat(result.FullText.PDFPath); err != nil {
 		t.Fatalf("stored PDF is missing: %v", err)
-	} else if info.Mode().Perm() != 0o600 {
+	} else if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("a stored PDF should not be world-readable, got %v", info.Mode().Perm())
 	}
 
