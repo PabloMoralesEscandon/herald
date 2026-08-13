@@ -96,6 +96,7 @@ func run(args []string) int {
 		DefaultVault: settings.VaultPath,
 		ArchiveRoot:  settings.ArchiveRoot(),
 		PDFRoot:      settings.PDFRoot(),
+		GROBIDURL:    settings.GROBIDURL,
 	})
 
 	switch command {
@@ -222,6 +223,7 @@ func serve(settings config.Settings, db *store.DB) int {
 		DefaultVault: settings.VaultPath,
 		ArchiveRoot:  settings.ArchiveRoot(),
 		PDFRoot:      settings.PDFRoot(),
+		GROBIDURL:    settings.GROBIDURL,
 		// Keeping a paper enriches it in the background while the dashboard
 		// stays responsive, then reads the article's own text from whatever
 		// open copy exists.

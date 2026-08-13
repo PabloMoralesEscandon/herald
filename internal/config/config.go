@@ -20,6 +20,7 @@ type Settings struct {
 	OllamaURL            string
 	OllamaModel          string
 	OllamaEmbeddingModel string
+	GROBIDURL            string
 }
 
 // Defaults mirrors the documented environment variable defaults.
@@ -30,6 +31,7 @@ const (
 	DefaultOllamaURL            = "http://127.0.0.1:11434"
 	DefaultOllamaModel          = "qwen2.5:3b"
 	DefaultOllamaEmbeddingModel = "embeddinggemma"
+	DefaultGROBIDURL            = "http://127.0.0.1:8070"
 )
 
 // FromEnv builds settings from HERALD_* variables, falling back to the local
@@ -49,6 +51,7 @@ func FromEnv() Settings {
 		OllamaURL:            envOr("HERALD_OLLAMA_URL", DefaultOllamaURL),
 		OllamaModel:          envOr("HERALD_OLLAMA_MODEL", DefaultOllamaModel),
 		OllamaEmbeddingModel: envOr("HERALD_OLLAMA_EMBEDDING_MODEL", DefaultOllamaEmbeddingModel),
+		GROBIDURL:            envOr("HERALD_GROBID_URL", DefaultGROBIDURL),
 	}
 }
 

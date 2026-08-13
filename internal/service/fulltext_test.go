@@ -38,12 +38,24 @@ extended later <cite class="ltx_cite">[<a href="#bib.bib2">2</a>]</cite>.</p></d
 var longSentence = strings.Repeat(
 	"This paragraph describes the interconnect design in enough detail to count as an article body. ", 8)
 
+var articleTEI = `<TEI xmlns="http://www.tei-c.org/ns/1.0"><teiHeader><fileDesc><titleStmt>
+<title>A Chiplet Interconnect</title></titleStmt></fileDesc></teiHeader><text><body><div>
+<head n="1">Introduction</head><p>` + longSentence + ` Uploaded PDF text.</p>
+</div></body></text></TEI>`
+
+func testPDFProcessor() fulltext.GROBIDProcessor {
+	return fulltext.GROBIDProcessorFunc(func([]byte) ([]byte, error) {
+		return []byte(articleTEI), nil
+	})
+}
+
 // staticExtractor answers every candidate with the same document.
 func staticExtractor(document []byte) *fulltext.Extractor {
 	return &fulltext.Extractor{
 		Fetch: func(url string, headers map[string]string, maxBytes int, timeout time.Duration) ([]byte, error) {
 			return document, nil
 		},
+		GROBID: testPDFProcessor(),
 	}
 }
 
@@ -53,6 +65,7 @@ func failingExtractor() *fulltext.Extractor {
 		Fetch: func(url string, headers map[string]string, maxBytes int, timeout time.Duration) ([]byte, error) {
 			return nil, fmt.Errorf("HTTP 403")
 		},
+		GROBID: testPDFProcessor(),
 	}
 }
 
@@ -267,6 +280,28 @@ func TestUploadedPDFCompletesTheNote(t *testing.T) {
 	}
 	if strings.Contains(note, "Full text not available automatically") {
 		t.Fatalf("the notice should be gone once the text exists:\n%s", note)
+	}
+}
+
+func TestUploadRecordsGROBIDOutageAsExtractionFailure(t *testing.T) {
+	svc, _ := newService(t)
+	svc.Extractor = &fulltext.Extractor{
+		GROBID: fulltext.GROBIDProcessorFunc(func([]byte) ([]byte, error) {
+			return nil, &fulltext.GROBIDServiceError{Reason: "GROBID is unavailable"}
+		}),
+	}
+	entryID := seedEntry(t, svc, "paper")
+
+	_, err := svc.UploadPaperPDF(entryID, uploadablePDF())
+	if _, ok := err.(*fulltext.GROBIDServiceError); !ok {
+		t.Fatalf("expected GROBIDServiceError, got %T: %v", err, err)
+	}
+	record, recordErr := svc.DB.GetFullText(entryID)
+	if recordErr != nil || record == nil {
+		t.Fatalf("GetFullText: %v", recordErr)
+	}
+	if record.State != "failed" || !strings.Contains(record.Error, "GROBID") {
+		t.Fatalf("unexpected extraction state: %+v", record)
 	}
 }
 

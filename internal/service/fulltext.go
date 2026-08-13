@@ -169,7 +169,10 @@ func (s *Service) fullTextExtractor() *fulltext.Extractor {
 	}
 	// paper.FetchPublicDocument is the same guarded fetcher the metadata
 	// providers use: public HTTPS only, re-validated on every redirect hop.
-	return &fulltext.Extractor{Fetch: paper.FetchPublicDocument}
+	return &fulltext.Extractor{
+		Fetch:  paper.FetchPublicDocument,
+		GROBID: fulltext.NewGROBIDClient(s.GROBIDURL),
+	}
 }
 
 // storeExtraction persists a successful extraction and its bibliography.
@@ -309,8 +312,8 @@ func (s *Service) mergeBibliography(entryID int64, references []fulltext.Referen
 // storePDF writes an extracted or uploaded PDF next to the database.
 //
 // The file is kept because it is the evidence behind the note's text: it lets
-// a re-extraction run offline, and it means a PDF the user supplied is not
-// lost the moment it has been read.
+// a re-extraction avoid downloading the source again, and it means a PDF the
+// user supplied is not lost the moment it has been read.
 func (s *Service) storePDF(entryID int64, document []byte) (string, error) {
 	root := s.pdfRoot()
 	if err := os.MkdirAll(root, 0o755); err != nil {
@@ -386,8 +389,15 @@ func (s *Service) UploadPaperPDF(entryID int64, document []byte) (*FullTextResul
 	}); err != nil {
 		return nil, err
 	}
-	result, err := fulltext.FromUpload(document)
+	result, err := s.fullTextExtractor().FromUpload(document)
 	if err != nil {
+		var serviceError *fulltext.GROBIDServiceError
+		if errors.As(err, &serviceError) {
+			_, _ = s.DB.UpsertFullText(entryID, store.FullTextUpdate{
+				State: "failed", Error: serviceError.Error(),
+			})
+			return nil, serviceError
+		}
 		// The upload failing leaves the entry asking for a PDF, because that
 		// is still what would fix it.
 		s.recordNeedsPDF(entryID, err.Error())

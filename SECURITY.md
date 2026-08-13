@@ -16,6 +16,11 @@ exports, `.env` files, logs, or private-key material. The repository
 `.gitignore` covers the standard locations and extensions, but review staged
 changes before every push.
 
+PDF extraction sends the complete document to `HERALD_GROBID_URL`. The default
+points to localhost. If you configure another host, use a GROBID service you
+trust and protect the connection appropriately; uploaded papers may be private
+or licensed material.
+
 To report a vulnerability, use the repository host's private security-reporting
 feature rather than opening a public issue. Include affected versions,
 reproduction steps, impact, and any suggested mitigation. Do not include real

@@ -4,10 +4,10 @@ Herald is a local-first inbox for technical news and academic research. It
 collects RSS feeds, supports read/keep/discard triage, creates local summaries,
 and exports kept entries as Obsidian-compatible Markdown.
 
-Herald is a single self-contained binary. The dashboard and the source catalog
-are embedded in it, so there is nothing to install alongside it: no runtime, no
-virtual environment, no accounts, API keys, hosted services, or paid
-subscriptions.
+The Herald application is a single self-contained binary. The dashboard and
+source catalog are embedded in it, with no accounts, API keys, hosted services,
+or paid subscriptions. PDF extraction uses a GROBID service; HTML article
+extraction and the rest of Herald continue to work when GROBID is unavailable.
 
 ## Install and run
 
@@ -15,6 +15,12 @@ Build the binary with Go 1.26 or newer and run it:
 
 ```bash
 go build -o herald ./cmd/herald
+docker run --rm --init --ulimit core=0 -p 8070:8070 grobid/grobid:0.9.0-crf
+```
+
+Leave GROBID running, then start Herald in another terminal:
+
+```bash
 ./herald init
 ./herald serve
 ```
@@ -113,10 +119,11 @@ headings, paragraphs, lists, tables, captions, and mathematics preserved.
 It reads from the openly available copy, preferring arXiv's HTML rendering
 where one exists, then the arXiv PDF, then an open-access PDF a free metadata
 provider reports, then the PDF a publication page declares for itself. PDFs are
-parsed in-process: there is no `pdftotext` to install and nothing is sent
-anywhere. Two-column layouts, ligatures, hyphens broken across lines, running
-heads, and page numbers are all handled, so the note reads as prose rather than
-as a dump of page fragments.
+sent to the configured GROBID service, which returns structured TEI for Herald
+to convert into Markdown. By default that service is local at
+`http://127.0.0.1:8070`; set `HERALD_GROBID_URL` for a container or remote
+deployment. A remote endpoint receives the complete PDFs Herald downloads or
+you upload, so use only a service you trust.
 
 **In-text citations become Obsidian links.** When a paper cites a work that is
 also kept in your vault, the marker in the running text is a real link to that
@@ -139,7 +146,7 @@ From the command line:
 ```bash
 herald fulltext                      # work through kept papers awaiting text
 herald fulltext --entry 42           # extract one paper
-herald fulltext --entry 42 --pdf paper.pdf   # read a local PDF, offline
+herald fulltext --entry 42 --pdf paper.pdf   # extract a local PDF with GROBID
 ```
 
 Extracted and uploaded PDFs are kept in `.herald/pdfs/`, outside the vault, so
@@ -197,6 +204,8 @@ Configuration environment variables:
 - `HERALD_VAULT` — Obsidian vault or export folder
 - `HERALD_HOST` — server interface (default `127.0.0.1`)
 - `HERALD_PORT` — dashboard port (default `8765`)
+- `HERALD_GROBID_URL` — GROBID REST service used for PDF extraction (default
+  `http://127.0.0.1:8070`)
 - `HERALD_OLLAMA_URL` — Ollama address (default `http://127.0.0.1:11434`)
 - `HERALD_OLLAMA_MODEL` — local model name (default `qwen2.5:3b`)
 - `HERALD_OLLAMA_EMBEDDING_MODEL` — local relevance model (default
@@ -227,8 +236,7 @@ internal/store/    SQLite schema, additive migrations, and every query
 internal/feed/     RSS 2.0, RSS 1.0/RDF, and Atom parsing; URL canonicalization
 internal/markdown/ feed HTML to Obsidian-compatible Markdown
 internal/paper/    DOI/arXiv/S2 identifiers, metadata providers, SSRF guards
-internal/pdf/      PDF parsing and positioned text extraction, no dependencies
-internal/fulltext/ article HTML and PDF to Markdown, bibliographies, citations
+internal/fulltext/ article HTML/GROBID TEI to Markdown, bibliographies, citations
 internal/relevance/ TF-IDF and Ollama scoring, thresholds, background rescoring
 internal/vault/    note rendering and the safe write/archive/restore lifecycle
 internal/service/  ingestion, triage, and vault synchronization
@@ -275,8 +283,8 @@ structure; ambiguous files become conflicts and are not overwritten.
 go test ./...
 ```
 
-The suite needs no network access and no Ollama. Alongside ordinary unit tests
-it carries golden files under `internal/*/testdata/`, which pin the exact output
+The suite needs no network access, GROBID, or Ollama. Alongside ordinary unit
+tests it carries golden files under `internal/*/testdata/`, which pin the exact output
 of the pieces whose formats are contracts: HTML-to-Markdown conversion, URL
 canonicalization (the cross-feed deduplication key), feed parsing, and the
 rendered Obsidian note. Those goldens exist because their output is written into

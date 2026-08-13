@@ -45,7 +45,9 @@ type Service struct {
 	Extractor *fulltext.Extractor
 	// PDFRoot is where extracted and uploaded PDFs are stored.
 	PDFRoot string
-	Now     func() time.Time
+	// GROBIDURL is the REST service used to turn PDFs into structured TEI.
+	GROBIDURL string
+	Now       func() time.Time
 
 	exporterOverride *vault.Exporter
 
@@ -80,6 +82,7 @@ func New(db *store.DB, options Options) *Service {
 		AutoExtractFullText: options.AutoExtractFullText,
 		Extractor:           options.Extractor,
 		PDFRoot:             options.PDFRoot,
+		GROBIDURL:           options.GROBIDURL,
 
 		Now:        options.Now,
 		enriching:  map[int64]bool{},
@@ -115,6 +118,7 @@ type Options struct {
 	DefaultVault        string
 	ArchiveRoot         string
 	PDFRoot             string
+	GROBIDURL           string
 	AutoEnrichKept      bool
 	AutoExtractFullText bool
 	Now                 func() time.Time

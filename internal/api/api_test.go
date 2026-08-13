@@ -55,6 +55,12 @@ func newServer(t *testing.T, document []byte) (*Server, *service.Service, int64)
 			}
 			return document, nil
 		},
+		GROBID: fulltext.GROBIDProcessorFunc(func([]byte) ([]byte, error) {
+			return []byte(`<TEI xmlns="http://www.tei-c.org/ns/1.0"><text><body><div>` +
+				`<head n="1">Introduction</head><p>` + strings.Repeat(
+				"This line of the paper carries real body text for the extractor. ", 14) +
+				`</p></div></body></text></TEI>`), nil
+		}),
 	}
 	// The importer is offline too. Extraction asks it where a paper's
 	// open-access copy is, and the real one would reach a metadata provider.

@@ -1,7 +1,6 @@
 package fulltext
 
 import (
-	"bytes"
 	"fmt"
 	"strings"
 	"testing"
@@ -288,100 +287,59 @@ func TestAmbiguousAuthorYearIsNotGuessed(t *testing.T) {
 	}
 }
 
-// pdfBuilder writes a small one-column PDF for the extraction tests.
-type pdfBuilder struct{ objects []string }
+var grobidArticleTEI = `<?xml version="1.0" encoding="UTF-8"?>
+<TEI xmlns="http://www.tei-c.org/ns/1.0">
+  <teiHeader><fileDesc><titleStmt><title type="main">Sparse Attention for Chips</title></titleStmt></fileDesc>
+    <profileDesc><abstract><div><p>We study sparse attention on hardware.</p></div></abstract></profileDesc>
+  </teiHeader>
+  <text><body><div><head n="1">Introduction</head>
+    <p>Earlier work <ref type="bibr" target="#b0">[1]</ref> introduced the idea, and a later study examined it further
+    <ref type="bibr" target="#b1">[2]</ref> on real hardware. The first paragraph then stops here.</p>
+    <p>` + strings.Repeat("The second paragraph and Body line 11 carry real content that must survive as useful extracted article text. ", 7) + `</p>
+    <list><item>First measured result</item><item>Second measured result</item></list>
+    <formula>E = mc^2</formula>
+    <figure type="table"><head>Measured throughput</head><table>
+      <row><cell>Design</cell><cell>Score</cell></row><row><cell>Ours</cell><cell>42</cell></row>
+    </table></figure>
+  </div></body><back><div type="references"><listBibl>
+    <biblStruct xml:id="b0" n="1"><analytic><title level="a">Attention on silicon</title>
+      <author><persName><forename>J.</forename><surname>Smith</surname></persName></author></analytic>
+      <monogr><imprint><date when="2019"/></imprint></monogr><idno type="DOI">10.1234/ABCD</idno>
+      <note type="raw_reference">J. Smith. Attention on silicon. Journal of Chips, 2019. doi:10.1234/abcd</note>
+    </biblStruct>
+    <biblStruct xml:id="b1" n="2"><analytic><title level="a">Follow-up study</title></analytic>
+      <idno type="arXiv">2401.01234v2</idno>
+      <note type="raw_reference">B. Writer. Follow-up study. arXiv:2401.01234, 2024.</note>
+    </biblStruct>
+  </listBibl></div></back></text>
+</TEI>`
 
-func (b *pdfBuilder) add(body string) int {
-	b.objects = append(b.objects, body)
-	return len(b.objects)
+var testPDF = []byte("%PDF-1.7\nGROBID test fixture")
+
+func testGROBIDProcessor() GROBIDProcessor {
+	return GROBIDProcessorFunc(func([]byte) ([]byte, error) {
+		return []byte(grobidArticleTEI), nil
+	})
 }
 
-func (b *pdfBuilder) build() []byte {
-	var out bytes.Buffer
-	out.WriteString("%PDF-1.7\n")
-	offsets := make([]int, len(b.objects)+1)
-	for index, body := range b.objects {
-		offsets[index+1] = out.Len()
-		fmt.Fprintf(&out, "%d 0 obj\n%s\nendobj\n", index+1, body)
-	}
-	xrefAt := out.Len()
-	fmt.Fprintf(&out, "xref\n0 %d\n0000000000 65535 f \n", len(b.objects)+1)
-	for index := 1; index <= len(b.objects); index++ {
-		fmt.Fprintf(&out, "%010d 00000 n \n", offsets[index])
-	}
-	fmt.Fprintf(&out, "trailer\n<</Size %d/Root 1 0 R>>\nstartxref\n%d\n%%%%EOF\n",
-		len(b.objects)+1, xrefAt)
-	return out.Bytes()
-}
-
-// paperPDF lays out lines as a typeset page would: a title, a heading, body
-// text at one size, and a references section.
-func paperPDF(lines []pdfLine) []byte {
-	var content strings.Builder
-	for _, line := range lines {
-		font := "F1"
-		if line.bold {
-			font = "F2"
-		}
-		fmt.Fprintf(&content, "BT /%s %g Tf %g %g Td (%s) Tj ET\n",
-			font, line.size, line.x, line.y, escapePDFString(line.text))
-	}
-
-	var b pdfBuilder
-	b.add("<</Type/Catalog/Pages 2 0 R>>")
-	b.add("<</Type/Pages/Kids[3 0 R]/Count 1>>")
-	b.add("<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]" +
-		"/Resources<</Font<</F1 5 0 R/F2 6 0 R>>>>/Contents 4 0 R>>")
-	stream := content.String()
-	b.add(fmt.Sprintf("<</Length %d>>\nstream\n%s\nendstream", len(stream), stream))
-	b.add("<</Type/Font/Subtype/Type1/BaseFont/Times-Roman/Encoding/WinAnsiEncoding>>")
-	b.add("<</Type/Font/Subtype/Type1/BaseFont/Times-Bold/Encoding/WinAnsiEncoding>>")
-	return b.build()
-}
-
-type pdfLine struct {
-	text string
-	x    float64
-	y    float64
-	size float64
-	bold bool
-}
-
-func escapePDFString(text string) string {
-	return strings.NewReplacer("(", `\(`, ")", `\)`, `\`, `\\`).Replace(text)
-}
-
-func TestPDFExtractionRecoversStructure(t *testing.T) {
-	lines := []pdfLine{
-		{text: "Sparse Attention for Chips", x: 150, y: 730, size: 17},
-		{text: "1 Introduction", x: 72, y: 690, size: 12, bold: true},
-		{text: "Earlier work [1] introduced the idea, and a later study exam-", x: 72, y: 670, size: 10},
-		{text: "ined it further [2] on real hardware at scale in production.", x: 72, y: 658, size: 10},
-		{text: "This sentence starts a new paragraph after a short line.", x: 82, y: 640, size: 10},
-		{text: "References", x: 72, y: 600, size: 12, bold: true},
-		{text: "[1] J. Smith and A. Jones. Attention on silicon. Journal of", x: 72, y: 580, size: 9},
-		{text: "Chips, 2019. doi:10.1234/abcd", x: 82, y: 570, size: 9},
-		{text: "[2] B. Writer. Follow-up study. arXiv:2401.01234, 2024.", x: 72, y: 556, size: 9},
-	}
-
-	document, err := FromPDF(paperPDF(lines))
+func TestPDFExtractionUsesGROBIDStructure(t *testing.T) {
+	document, err := FromPDF(testPDF, testGROBIDProcessor())
 	if err != nil {
 		t.Fatalf("FromPDF returned an error: %v", err)
 	}
 	markdown := document.Markdown()
 
-	if !strings.Contains(markdown, "1 Introduction") {
-		t.Fatalf("heading was not detected:\n%s", markdown)
+	if document.Title != "Sparse Attention for Chips" ||
+		!strings.Contains(document.Abstract, "sparse attention") {
+		t.Fatalf("GROBID header was not preserved: %+v", document)
 	}
-	// The typesetter's line-break hyphen must not survive into the text.
-	if !strings.Contains(markdown, "examined it further") {
-		t.Fatalf("hyphenated word was not rejoined:\n%s", markdown)
-	}
-	if strings.Contains(markdown, "exam- ined") || strings.Contains(markdown, "exam-ined") {
-		t.Fatalf("hyphenation repair failed:\n%s", markdown)
-	}
-	if strings.Contains(markdown, "References") {
-		t.Fatalf("the bibliography should be parsed, not rendered as body:\n%s", markdown)
+	for _, expected := range []string{
+		"### 1 Introduction", "- First measured result", "- Second measured result",
+		"$$\nE = mc^2\n$$", "*Measured throughput*", "| Design | Score |",
+	} {
+		if !strings.Contains(markdown, expected) {
+			t.Fatalf("missing %q in GROBID markdown:\n%s", expected, markdown)
+		}
 	}
 
 	if len(document.References) != 2 {
@@ -398,99 +356,29 @@ func TestPDFExtractionRecoversStructure(t *testing.T) {
 	if len(keys) != 2 {
 		t.Fatalf("expected both in-text citations to link, got %v:\n%s", keys, markdown)
 	}
-}
-
-func TestTableOfContentsDoesNotEndTheArticle(t *testing.T) {
-	// A paper with a table of contents lists "References" on an early page,
-	// styled exactly like the real heading. Splitting the document there threw
-	// away almost the whole article, so the choice is made on what follows the
-	// heading: page numbers, or actual reference entries.
-	lines := []pdfLine{
-		{text: "Contents", x: 72, y: 730, size: 12, bold: true},
-		{text: "1 Introduction", x: 72, y: 712, size: 11},
-		{text: "2 Method", x: 72, y: 700, size: 11},
-		{text: "References", x: 72, y: 688, size: 11, bold: true},
-		{text: "4", x: 300, y: 688, size: 11},
-	}
-	// A body long enough that losing it would be obvious.
-	y := 660.0
-	for index := range 12 {
-		lines = append(lines, pdfLine{
-			text: fmt.Sprintf(
-				"Body line %d of the article, carrying real content that must survive the split.", index),
-			x: 72, y: y, size: 11,
-		})
-		y -= 12
-	}
-	lines = append(lines,
-		pdfLine{text: "References", x: 72, y: y - 20, size: 12, bold: true},
-		pdfLine{text: "[1] J. Smith and A. Jones. A cited paper about interconnects. Journal, 2019.",
-			x: 72, y: y - 38, size: 10},
-		pdfLine{text: "[2] B. Writer. Another cited work with a long enough title. Conference, 2021.",
-			x: 72, y: y - 50, size: 10},
-	)
-
-	document, err := FromPDF(paperPDF(lines))
-	if err != nil {
-		t.Fatalf("FromPDF returned an error: %v", err)
-	}
-	markdown := document.Markdown()
-	if !strings.Contains(markdown, "Body line 11") {
-		t.Fatalf("the article body was cut at the table of contents:\n%s", markdown)
-	}
-	if len(document.References) != 2 {
-		t.Fatalf("expected the real bibliography, got %d entries: %+v",
-			len(document.References), document.References)
+	if !strings.Contains(StripCitations(markdown), "Earlier work [1]") ||
+		strings.Contains(StripCitations(markdown), "herald:cite") {
+		t.Fatalf("TEI citations were not preserved cleanly:\n%s", markdown)
 	}
 }
 
-func TestPDFParagraphsSplitOnShortLines(t *testing.T) {
-	lines := []pdfLine{
-		{text: "The first paragraph runs to the right edge of the column and", x: 72, y: 700, size: 10},
-		{text: "then stops here.", x: 72, y: 688, size: 10},
-		{text: "The second paragraph begins on its own line entirely and it", x: 72, y: 676, size: 10},
-		{text: "also continues for a while before ending.", x: 72, y: 664, size: 10},
-	}
-	document, err := FromPDF(paperPDF(lines))
-	if err != nil {
-		t.Fatalf("FromPDF returned an error: %v", err)
-	}
-	paragraphs := 0
-	for _, block := range document.Blocks {
-		if block.Kind == BlockParagraph {
-			paragraphs++
-		}
-	}
-	if paragraphs != 2 {
-		t.Fatalf("expected 2 paragraphs, got %d:\n%s", paragraphs, document.Markdown())
+func TestGROBIDDocumentWithoutBodyIsReportedDistinctly(t *testing.T) {
+	processor := GROBIDProcessorFunc(func([]byte) ([]byte, error) {
+		return []byte(`<TEI xmlns="http://www.tei-c.org/ns/1.0"><text><body/></text></TEI>`), nil
+	})
+	_, err := FromPDF(testPDF, processor)
+	if _, ok := err.(*ScannedError); !ok {
+		t.Fatalf("expected a scanned-PDF report, got %T: %v", err, err)
 	}
 }
 
-func TestScannedPDFIsReportedDistinctly(t *testing.T) {
-	var b pdfBuilder
-	b.add("<</Type/Catalog/Pages 2 0 R>>")
-	b.add("<</Type/Pages/Kids[3 0 R]/Count 1>>")
-	b.add("<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]" +
-		"/Resources<</XObject<</X1 5 0 R>>>>/Contents 4 0 R>>")
-	stream := "q 612 0 0 792 0 0 cm /X1 Do Q"
-	b.add(fmt.Sprintf("<</Length %d>>\nstream\n%s\nendstream", len(stream), stream))
-	image := strings.Repeat("\x00", 64)
-	b.add(fmt.Sprintf("<</Type/XObject/Subtype/Image/Width 8/Height 8/ColorSpace/DeviceGray"+
-		"/BitsPerComponent 8/Length %d>>\nstream\n%s\nendstream", len(image), image))
-
-	_, err := FromPDF(b.build())
-	var scanned *ScannedError
-	if err == nil || !asScanned(err, &scanned) {
-		t.Fatalf("expected a scanned-PDF report, got %v", err)
+func TestInvalidGROBIDTEIIsRejected(t *testing.T) {
+	processor := GROBIDProcessorFunc(func([]byte) ([]byte, error) {
+		return []byte(`<TEI><text>`), nil
+	})
+	if _, err := FromPDF(testPDF, processor); err == nil {
+		t.Fatal("expected malformed GROBID XML to fail")
 	}
-}
-
-func asScanned(err error, target **ScannedError) bool {
-	scanned, ok := err.(*ScannedError)
-	if ok {
-		*target = scanned
-	}
-	return ok
 }
 
 func TestCandidatesPreferArxivHTML(t *testing.T) {
@@ -517,16 +405,14 @@ func TestCandidatesRejectNonHTTPS(t *testing.T) {
 }
 
 func TestExtractFallsThroughToTheNextSource(t *testing.T) {
-	page := paperPDF([]pdfLine{
-		{text: strings.Repeat("Real body text that is long enough to count. ", 20), x: 72, y: 700, size: 10},
-	})
 	extractor := &Extractor{
 		Fetch: func(url string, headers map[string]string, maxBytes int, timeout time.Duration) ([]byte, error) {
 			if strings.Contains(url, "/html/") {
 				return nil, fmt.Errorf("no HTML rendering exists")
 			}
-			return page, nil
+			return testPDF, nil
 		},
+		GROBID: testGROBIDProcessor(),
 	}
 
 	result, err := extractor.Extract(Locators{ArxivID: "2401.01234"})
@@ -558,10 +444,22 @@ func TestExtractReportsNoOpenSource(t *testing.T) {
 	}
 }
 
+func TestExtractReportsGROBIDOutageAsServiceFailure(t *testing.T) {
+	extractor := &Extractor{
+		Fetch: func(string, map[string]string, int, time.Duration) ([]byte, error) {
+			return testPDF, nil
+		},
+		GROBID: GROBIDProcessorFunc(func([]byte) ([]byte, error) {
+			return nil, &GROBIDServiceError{Reason: "GROBID is unavailable"}
+		}),
+	}
+	_, err := extractor.Extract(Locators{ArxivID: "2401.01234"})
+	if _, ok := err.(*GROBIDServiceError); !ok {
+		t.Fatalf("expected GROBIDServiceError, got %T: %v", err, err)
+	}
+}
+
 func TestExtractUsesPageDeclaredPDF(t *testing.T) {
-	body := paperPDF([]pdfLine{
-		{text: strings.Repeat("Publisher hosted open access text. ", 30), x: 72, y: 700, size: 10},
-	})
 	extractor := &Extractor{
 		Fetch: func(url string, headers map[string]string, maxBytes int, timeout time.Duration) ([]byte, error) {
 			switch {
@@ -570,10 +468,11 @@ func TestExtractUsesPageDeclaredPDF(t *testing.T) {
 					`<meta name="citation_pdf_url" content="https://example.org/article.pdf">` +
 					`</head><body>abstract page</body></html>`), nil
 			case strings.HasSuffix(url, "/article.pdf"):
-				return body, nil
+				return testPDF, nil
 			}
 			return nil, fmt.Errorf("not found")
 		},
+		GROBID: testGROBIDProcessor(),
 	}
 
 	result, err := extractor.Extract(Locators{PageURL: "https://example.org/article"})

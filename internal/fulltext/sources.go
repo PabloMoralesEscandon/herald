@@ -2,6 +2,7 @@ package fulltext
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -90,6 +91,7 @@ func Candidates(locators Locators) []Candidate {
 type Extractor struct {
 	Fetch   Fetcher
 	Timeout time.Duration
+	GROBID  GROBIDProcessor
 }
 
 // Result is a completed extraction.
@@ -131,6 +133,10 @@ func (e *Extractor) Extract(locators Locators) (*Result, error) {
 		if err == nil {
 			return result, nil
 		}
+		var serviceError *GROBIDServiceError
+		if errors.As(err, &serviceError) {
+			return nil, serviceError
+		}
 		attempts = append(attempts, fmt.Sprintf("%s: %s", candidate.Kind, err.Error()))
 	}
 
@@ -141,6 +147,10 @@ func (e *Extractor) Extract(locators Locators) (*Result, error) {
 		result, err := e.tryCandidate(candidate, timeout)
 		if err == nil {
 			return result, nil
+		}
+		var serviceError *GROBIDServiceError
+		if errors.As(err, &serviceError) {
+			return nil, serviceError
 		}
 		attempts = append(attempts, fmt.Sprintf("%s: %s", candidate.Kind, err.Error()))
 	}
@@ -164,7 +174,7 @@ func (e *Extractor) tryCandidate(candidate Candidate, timeout time.Duration) (*R
 
 	// The declared format is a hint, not a promise: an arXiv HTML URL for a
 	// paper without an HTML rendering answers with something else entirely.
-	extracted, err := Parse(document, candidate.URL)
+	extracted, err := e.parse(document, candidate.URL)
 	if err != nil {
 		return nil, err
 	}
@@ -181,14 +191,25 @@ func (e *Extractor) tryCandidate(candidate Candidate, timeout time.Duration) (*R
 
 // Parse extracts a document from bytes whose format is detected from content.
 func Parse(document []byte, sourceURL string) (*Document, error) {
+	return (&Extractor{}).parse(document, sourceURL)
+}
+
+func (e *Extractor) parse(document []byte, sourceURL string) (*Document, error) {
 	switch {
 	case IsPDF(document):
-		return FromPDF(document)
+		return FromPDF(document, e.grobid())
 	case looksLikeHTML(document):
 		return FromHTML(document, sourceURL)
 	default:
 		return nil, &Error{Reason: "the document is neither HTML nor a PDF"}
 	}
+}
+
+func (e *Extractor) grobid() GROBIDProcessor {
+	if e != nil && e.GROBID != nil {
+		return e.GROBID
+	}
+	return NewGROBIDClient(DefaultGROBIDURL)
 }
 
 // IsPDF reports whether bytes begin with the PDF signature.
@@ -246,10 +267,16 @@ func (e *Extractor) declaredPDF(locators Locators, timeout time.Duration) (strin
 
 // FromUpload extracts a document from a PDF the user supplied.
 func FromUpload(document []byte) (*Result, error) {
+	return (&Extractor{}).FromUpload(document)
+}
+
+// FromUpload extracts a user-supplied PDF with this extractor's configured
+// GROBID service.
+func (e *Extractor) FromUpload(document []byte) (*Result, error) {
 	if !IsPDF(document) {
 		return nil, &Error{Reason: "That file is not a PDF"}
 	}
-	extracted, err := FromPDF(document)
+	extracted, err := FromPDF(document, e.grobid())
 	if err != nil {
 		return nil, err
 	}
